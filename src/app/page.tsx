@@ -8,6 +8,8 @@ import { Progress } from '@/components/ui/progress';
 import { Rewind, Repeat, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { VolumeDisplay } from '@/components/ui/volume-display';
+
 
 type Subtitle = {
   id: number;
@@ -234,6 +236,11 @@ export default function LinguaPlayerPage() {
             </div>
           ) : (
             <div className="flex flex-col gap-6 animate-in fade-in duration-500">
+              <VolumeDisplay 
+                subtitles={subtitles} 
+                currentSentenceIndex={currentSentenceIndex} 
+                audioElement={audioRef.current} 
+              />
               <div className="text-center p-4 sm:p-6 bg-secondary/50 rounded-lg min-h-[10rem] flex items-center justify-center border">
                 <p className="text-xl sm:text-2xl font-medium text-foreground">
                   {subtitles.length > 0 ? subtitles[currentSentenceIndex]?.text : "Loading subtitles..."}
