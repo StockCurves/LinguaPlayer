@@ -263,7 +263,7 @@ export default function LinguaPlayerPage() {
           </CardFooter>
         )}
       </Card>
-      <audio ref={audioRef} src={audioUrl || ''} onEnded={() => setIsPlaying(false)} />
+      <audio ref={audioRef} src={audioUrl ?? undefined} onEnded={() => setIsPlaying(false)} />
     </main>
   );
 }
