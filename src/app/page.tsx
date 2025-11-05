@@ -143,13 +143,20 @@ export default function LinguaPlayerPage() {
 
   const playSentence = (index: number) => {
     const audio = audioRef.current;
+    if (!audio) return;
+  
+    // Check if we are playing from the visible list or the full list
     const sub = visibleSubtitles[index];
-    if (audio && sub) {
+    if (sub) {
+      // Find the corresponding index in the original subtitles array
       const originalIndex = subtitles.findIndex(s => s.id === sub.id);
       if (originalIndex !== -1) {
+        // Always set the main index state based on the original list
         setCurrentSentenceIndex(originalIndex);
         audio.currentTime = sub.startTime;
-        audio.play().catch(e => console.error("Audio play failed:", e));
+        if (audio.paused) {
+          audio.play().catch(e => console.error("Audio play failed:", e));
+        }
       }
     }
   };
@@ -186,7 +193,9 @@ export default function LinguaPlayerPage() {
   };
 
   const handlePrevious = () => {
-    const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
+    const currentSub = subtitles[currentSentenceIndex];
+    if (!currentSub) return;
+    const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub.id);
     if (currentVisibleIndex > 0) {
       const newVisibleIndex = currentVisibleIndex - 1;
       const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
@@ -195,7 +204,9 @@ export default function LinguaPlayerPage() {
   };
 
   const handleNext = () => {
-    const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
+    const currentSub = subtitles[currentSentenceIndex];
+    if (!currentSub) return;
+    const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub.id);
     if (currentVisibleIndex < visibleSubtitles.length - 1) {
       const newVisibleIndex = currentVisibleIndex + 1;
       const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
@@ -204,17 +215,24 @@ export default function LinguaPlayerPage() {
   };
 
   const handleSentenceClick = (index: number) => {
-    const sub = visibleSubtitles[index];
-    const originalIndex = subtitles.findIndex(s => s.id === sub.id);
-    setCurrentSentenceIndex(originalIndex);
     playSentence(index);
   };
 
   const handleStarClick = (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
-    setSubtitles(prev => 
-      prev.map(sub => sub.id === id ? { ...sub, isStarred: !sub.isStarred } : sub)
+    const newSubtitles = subtitles.map(sub => 
+      sub.id === id ? { ...sub, isStarred: !sub.isStarred } : sub
     );
+    setSubtitles(newSubtitles);
+
+    // If we are filtering and the item is being added to the filtered list, select it.
+    const newlyStarredSub = newSubtitles.find(sub => sub.id === id);
+    if (showOnlyStarred && newlyStarredSub?.isStarred) {
+        const newIndex = newSubtitles.findIndex(sub => sub.id === id);
+        if (newIndex !== -1) {
+            setCurrentSentenceIndex(newIndex);
+        }
+    }
   };
 
   useEffect(() => {
@@ -227,7 +245,6 @@ export default function LinguaPlayerPage() {
 
       if (isPlaying && audio.currentTime >= sub.endTime) {
         audio.pause();
-        setIsPlaying(false);
       }
       
       const duration = sub.endTime - sub.startTime;
@@ -275,12 +292,15 @@ export default function LinguaPlayerPage() {
         return;
       }
       
+      const currentSub = subtitles[currentSentenceIndex];
+      if (!currentSub) return;
+      
       // Prevent default for spacebar and arrow keys scrolling
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
           e.preventDefault();
       }
       
-      const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex]?.id);
+      const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub.id);
       
       switch (e.code) {
         case 'Space':
@@ -393,7 +413,7 @@ export default function LinguaPlayerPage() {
               </div>
               <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
               <div className="flex justify-center items-center gap-2 sm:gap-4">
-                <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={currentSentenceIndex === 0}>
+                <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
                   <Rewind className="h-6 w-6" />
                   <span className="sr-only">Previous sentence</span>
                 </Button>
@@ -401,7 +421,7 @@ export default function LinguaPlayerPage() {
                   {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
                   <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
                 </Button>
-                <Button onClick={handleNext} variant="ghost" size="lg" disabled={!subtitles.length || currentSentenceIndex >= subtitles.length - 1}>
+                <Button onClick={handleNext} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
                   <FastForward className="h-6 w-6" />
                   <span className="sr-only">Next sentence</span>
                 </Button>
@@ -420,35 +440,38 @@ export default function LinguaPlayerPage() {
 
               <ScrollArea className="h-40 w-full rounded-md border p-4">
                 <div className="flex flex-col gap-2">
-                  {visibleSubtitles.map((sub, index) => (
-                    <div
-                      key={sub.id}
-                      ref={el => sentenceScrollRef.current[index] = el}
-                      onClick={() => handleSentenceClick(index)}
-                      className={cn(
-                        "cursor-pointer rounded-md p-2 transition-colors flex items-start gap-3",
-                        sub.id === subtitles[currentSentenceIndex]?.id
-                          ? 'bg-accent/20'
-                          : 'hover:bg-accent/10'
-                      )}
-                    >
-                      <button onClick={(e) => handleStarClick(e, sub.id)} className="p-1 -ml-1 text-muted-foreground hover:text-amber-500 transition-colors">
-                        <Star className={cn("w-4 h-4", sub.isStarred ? 'text-amber-400 fill-amber-400' : 'text-muted-foreground')}/>
-                        <span className="sr-only">Star sentence</span>
-                      </button>
-                      <p
+                  {visibleSubtitles.map((sub, index) => {
+                    const originalIndex = subtitles.findIndex(s => s.id === sub.id);
+                    return (
+                      <div
+                        key={sub.id}
+                        ref={el => sentenceScrollRef.current[index] = el}
+                        onClick={() => handleSentenceClick(index)}
                         className={cn(
-                          "flex-1",
+                          "cursor-pointer rounded-md p-2 transition-colors flex items-start gap-3",
                           sub.id === subtitles[currentSentenceIndex]?.id
-                            ? 'font-bold text-foreground'
-                            : 'text-muted-foreground'
+                            ? 'bg-accent/20'
+                            : 'hover:bg-accent/10'
                         )}
                       >
-                        <span className={cn("mr-2", sub.id === subtitles[currentSentenceIndex]?.id ? 'text-primary' : '')}>{subtitles.findIndex(s => s.id === sub.id) + 1}.</span>
-                        <span>{sub.text}</span>
-                      </p>
-                    </div>
-                  ))}
+                        <button onClick={(e) => handleStarClick(e, sub.id)} className="p-1 -ml-1 text-muted-foreground hover:text-amber-500 transition-colors">
+                          <Star className={cn("w-4 h-4", sub.isStarred ? 'text-amber-400 fill-amber-400' : 'text-muted-foreground')}/>
+                          <span className="sr-only">Star sentence</span>
+                        </button>
+                        <p
+                          className={cn(
+                            "flex-1",
+                            sub.id === subtitles[currentSentenceIndex]?.id
+                              ? 'font-bold text-foreground'
+                              : 'text-muted-foreground'
+                          )}
+                        >
+                          <span className={cn("mr-2", sub.id === subtitles[currentSentenceIndex]?.id ? 'text-primary' : '')}>{originalIndex + 1}.</span>
+                          <span>{sub.text}</span>
+                        </p>
+                      </div>
+                    )
+                  })}
                 </div>
               </ScrollArea>
               
@@ -461,7 +484,9 @@ export default function LinguaPlayerPage() {
           </CardFooter>
         )}
       </Card>
-      <audio ref={audioRef} src={audioUrl ?? undefined} onEnded={() => setIsPlaying(false)} />
+      <audio ref={audioRef} src={audioUrl ?? undefined} onEnded={() => {
+        setIsPlaying(false)
+      }} />
     </main>
   );
 }
