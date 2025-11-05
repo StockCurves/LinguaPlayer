@@ -156,8 +156,13 @@ export default function LinguaPlayerPage() {
       const sub = subtitles[currentSentenceIndex];
       if (!sub) return;
 
-      if (isPlaying && audio.currentTime >= sub.endTime) {
-        audio.pause();
+      // Automatically move to the next sentence if the current one ends
+      if (audio.currentTime >= sub.endTime) {
+        if (currentSentenceIndex < subtitles.length - 1) {
+            setCurrentSentenceIndex(currentSentenceIndex + 1);
+        } else {
+            audio.pause();
+        }
       }
       
       const duration = sub.endTime - sub.startTime;
@@ -179,6 +184,12 @@ export default function LinguaPlayerPage() {
       audio.removeEventListener('pause', onPause);
     };
   }, [audioRef, subtitles, currentSentenceIndex, isPlaying]);
+  
+  // Auto-play next sentence effect
+  useEffect(() => {
+    playSentence(currentSentenceIndex);
+  }, [currentSentenceIndex]);
+
 
   const UploadBox = ({ type }: { type: 'audio' | 'srt' }) => {
     const file = type === 'audio' ? audioFile : srtFile;
@@ -239,7 +250,8 @@ export default function LinguaPlayerPage() {
               <VolumeDisplay 
                 subtitles={subtitles} 
                 currentSentenceIndex={currentSentenceIndex} 
-                audioElement={audioRef.current} 
+                audioElement={audioRef.current}
+                audioFile={audioFile}
               />
               <div className="text-center p-4 sm:p-6 bg-secondary/50 rounded-lg min-h-[10rem] flex items-center justify-center border">
                 <p className="text-xl sm:text-2xl font-medium text-foreground">
