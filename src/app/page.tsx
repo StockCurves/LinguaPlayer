@@ -36,6 +36,7 @@ export default function LinguaPlayerPage() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const sentenceScrollRef = useRef<(HTMLDivElement | null)[]>([]);
   const mainContainerRef = useRef<HTMLDivElement>(null);
+  const lastUnfilteredIndexRef = useRef(0);
   const { toast } = useToast();
   
   const hasStarredSentences = subtitles.some(sub => sub.isStarred);
@@ -241,6 +242,22 @@ export default function LinguaPlayerPage() {
     }
   };
 
+  const handleShowStarredToggle = (checked: boolean) => {
+    if (checked) {
+      // When turning on, save the current index and find the first starred item.
+      lastUnfilteredIndexRef.current = currentSentenceIndex;
+      const firstStarredSub = subtitles.find(sub => sub.isStarred);
+      if (firstStarredSub) {
+        const firstStarredIndex = subtitles.findIndex(sub => sub.id === firstStarredSub.id);
+        setCurrentSentenceIndex(firstStarredIndex);
+      }
+    } else {
+      // When turning off, restore the last known index.
+      setCurrentSentenceIndex(lastUnfilteredIndexRef.current);
+    }
+    setShowOnlyStarred(checked);
+  };
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !subtitles.length) return;
@@ -438,7 +455,7 @@ export default function LinguaPlayerPage() {
                   <Switch
                     id="show-starred"
                     checked={showOnlyStarred}
-                    onCheckedChange={setShowOnlyStarred}
+                    onCheckedChange={handleShowStarredToggle}
                   />
                   <Label htmlFor="show-starred">Show Starred Only</Label>
                 </div>
