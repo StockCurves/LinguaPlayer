@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
-import { Rewind, Repeat, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2 } from 'lucide-react';
+import { Rewind, Repeat, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { VolumeDisplay } from '@/components/ui/volume-display';
@@ -49,14 +49,18 @@ export default function LinguaPlayerPage() {
         .filter(part => part.trim())
         .map(part => {
           const lines = part.trim().split('\n');
-          if (lines.length < 3) return null;
+          if (lines.length < 2) return null;
           
-          const id = parseInt(lines[0], 10);
-          const timeMatch = lines[1].match(/(\d{2}:\d{2}:\d{2},\d{3})\s-->\s(\d{2}:\d{2}:\d{2},\d{3})/);
+          // Allow for SRT files that don't have the number index for each entry
+          const timeLineIndex = lines.length > 2 ? 1 : 0;
+          if (!lines[timeLineIndex] || !lines[timeLineIndex].includes('-->')) return null;
+
+          const id = lines.length > 2 ? parseInt(lines[0], 10) : (Math.random() * 1000);
+          const timeMatch = lines[timeLineIndex].match(/(\d{2}:\d{2}:\d{2},\d{3})\s-->\s(\d{2}:\d{2}:\d{2},\d{3})/);
           if (!timeMatch) return null;
 
           const [, startTimeStr, endTimeStr] = timeMatch;
-          const text = lines.slice(2).join(' ').trim();
+          const text = lines.slice(timeLineIndex + 1).join(' ').trim();
           
           if (!isNaN(id) && startTimeStr && endTimeStr && text) {
             return {
@@ -133,11 +137,21 @@ export default function LinguaPlayerPage() {
       audio.play().catch(e => console.error("Audio play failed:", e));
     }
   };
+  
+  const togglePlayPause = () => {
+    const audio = audioRef.current;
+    if (audio) {
+      if (audio.paused) {
+        playSentence(currentSentenceIndex);
+      } else {
+        audio.pause();
+      }
+    }
+  };
 
   const handlePrevious = () => {
     const newIndex = Math.max(0, currentSentenceIndex - 1);
     setCurrentSentenceIndex(newIndex);
-    playSentence(newIndex);
   };
 
   const handleReplay = () => playSentence(currentSentenceIndex);
@@ -145,7 +159,6 @@ export default function LinguaPlayerPage() {
   const handleNext = () => {
     const newIndex = Math.min(subtitles.length - 1, currentSentenceIndex + 1);
     setCurrentSentenceIndex(newIndex);
-    playSentence(newIndex);
   };
 
   useEffect(() => {
@@ -156,13 +169,8 @@ export default function LinguaPlayerPage() {
       const sub = subtitles[currentSentenceIndex];
       if (!sub) return;
 
-      // Automatically move to the next sentence if the current one ends
       if (audio.currentTime >= sub.endTime) {
-        if (currentSentenceIndex < subtitles.length - 1) {
-            setCurrentSentenceIndex(currentSentenceIndex + 1);
-        } else {
-            audio.pause();
-        }
+        audio.pause();
       }
       
       const duration = sub.endTime - sub.startTime;
@@ -183,12 +191,14 @@ export default function LinguaPlayerPage() {
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('pause', onPause);
     };
-  }, [audioRef, subtitles, currentSentenceIndex, isPlaying]);
+  }, [audioRef, subtitles, currentSentenceIndex]);
   
-  // Auto-play next sentence effect
+  // Auto-play sentence when index changes
   useEffect(() => {
-    playSentence(currentSentenceIndex);
-  }, [currentSentenceIndex]);
+    if (audioFile && srtFile) {
+        playSentence(currentSentenceIndex);
+    }
+  }, [currentSentenceIndex, audioFile, srtFile]);
 
 
   const UploadBox = ({ type }: { type: 'audio' | 'srt' }) => {
@@ -264,9 +274,13 @@ export default function LinguaPlayerPage() {
                   <Rewind className="h-6 w-6" />
                   <span className="sr-only">Previous sentence</span>
                 </Button>
-                <Button onClick={handleReplay} variant="primary" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform">
-                  <Repeat className="h-7 w-7 sm:h-8 sm:w-8" />
-                  <span className="sr-only">Replay current sentence</span>
+                <Button onClick={handleReplay} variant="outline" size="lg">
+                    <Repeat className="h-6 w-6" />
+                    <span className="sr-only">Replay current sentence</span>
+                </Button>
+                <Button onClick={togglePlayPause} variant="primary" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform">
+                  {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
+                  <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
                 </Button>
                 <Button onClick={handleNext} variant="ghost" size="lg" disabled={!subtitles.length || currentSentenceIndex >= subtitles.length - 1}>
                   <FastForward className="h-6 w-6" />
