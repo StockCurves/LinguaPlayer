@@ -221,25 +221,26 @@ export default function LinguaPlayerPage() {
 
   const handleStarClick = (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
-    const newSubtitles = subtitles.map(sub => 
-      sub.id === id ? { ...sub, isStarred: !sub.isStarred } : sub
-    );
-    setSubtitles(newSubtitles);
+    setSubtitles(prevSubtitles => {
+      const newSubtitles = prevSubtitles.map(sub =>
+        sub.id === id ? { ...sub, isStarred: !sub.isStarred } : sub
+      );
 
-    // If we are filtering and the item is being added to the filtered list, select it.
-    const newlyStarredSub = newSubtitles.find(sub => sub.id === id);
-    if (showOnlyStarred && newlyStarredSub?.isStarred) {
-        const newIndex = newSubtitles.findIndex(sub => sub.id === id);
-        if (newIndex !== -1) {
-            setCurrentSentenceIndex(newIndex);
-        }
-    }
+      // Find the original index of the starred/unstarred item
+      const newIndex = newSubtitles.findIndex(sub => sub.id === id);
+      if (newIndex !== -1) {
+        // Set it as the current sentence, but don't play
+        setCurrentSentenceIndex(newIndex);
+      }
+      
+      // If all stars are removed, switch back to showing all sentences
+      const anyStarred = newSubtitles.some(sub => sub.isStarred);
+      if (!anyStarred) {
+        setShowOnlyStarred(false);
+      }
 
-    // If all stars are removed, switch back to showing all sentences
-    const anyStarred = newSubtitles.some(sub => sub.isStarred);
-    if (!anyStarred) {
-      setShowOnlyStarred(false);
-    }
+      return newSubtitles;
+    });
   };
 
   const handleShowStarredToggle = (checked: boolean) => {
