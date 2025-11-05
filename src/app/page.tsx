@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect, ChangeEvent, DragEvent } from 'react';
+import { useState, useRef, useEffect, ChangeEvent, DragEvent, KeyboardEvent } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
-import { Rewind, Repeat, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause } from 'lucide-react';
+import { Rewind, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { VolumeDisplay } from '@/components/ui/volume-display';
@@ -31,6 +31,7 @@ export default function LinguaPlayerPage() {
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const sentenceScrollRef = useRef<(HTMLDivElement | null)[]>([]);
+  const mainContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   const parseSrt = (srtText: string) => {
@@ -53,7 +54,6 @@ export default function LinguaPlayerPage() {
           const lines = part.trim().split('\n');
           if (lines.length < 2) return null;
           
-          // Allow for SRT files that don't have the number index for each entry
           const timeLineIndex = lines.length > 2 && lines[1].includes('-->') ? 1 : lines.findIndex(l => l.includes('-->'));
           if (timeLineIndex === -1) return null;
 
@@ -158,8 +158,6 @@ export default function LinguaPlayerPage() {
     setCurrentSentenceIndex(newIndex);
   };
 
-  const handleReplay = () => playSentence(currentSentenceIndex);
-
   const handleNext = () => {
     const newIndex = Math.min(subtitles.length - 1, currentSentenceIndex + 1);
     setCurrentSentenceIndex(newIndex);
@@ -212,6 +210,51 @@ export default function LinguaPlayerPage() {
     });
   }, [currentSentenceIndex, audioFile, srtFile]);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (!audioFile || !srtFile) return;
+
+      // Prevent default for spacebar scrolling
+      if (e.code === 'Space') {
+          e.preventDefault();
+      }
+      
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      
+      switch (e.code) {
+        case 'Space':
+          togglePlayPause();
+          break;
+        case 'ArrowLeft':
+          handlePrevious();
+          break;
+        case 'ArrowRight':
+          handleNext();
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          handlePrevious();
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          handleNext();
+          break;
+        case 'Enter':
+          playSentence(currentSentenceIndex);
+          break;
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [audioFile, srtFile, currentSentenceIndex, subtitles]);
+
 
   const UploadBox = ({ type }: { type: 'audio' | 'srt' }) => {
     const file = type === 'audio' ? audioFile : srtFile;
@@ -255,7 +298,7 @@ export default function LinguaPlayerPage() {
 
 
   return (
-    <main className="flex min-h-dvh w-full flex-col items-center justify-center bg-background p-4 sm:p-6 md:p-8 font-body">
+    <main ref={mainContainerRef} tabIndex={-1} className="flex min-h-dvh w-full flex-col items-center justify-center bg-background p-4 sm:p-6 md:p-8 font-body focus:outline-none">
       <Card className="w-full max-w-2xl shadow-xl rounded-2xl animate-in fade-in zoom-in-95 duration-500">
         <CardHeader className="text-center">
           <CardTitle className="text-3xl font-headline tracking-tight">Lingua Player</CardTitle>
@@ -285,10 +328,6 @@ export default function LinguaPlayerPage() {
                 <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={currentSentenceIndex === 0}>
                   <Rewind className="h-6 w-6" />
                   <span className="sr-only">Previous sentence</span>
-                </Button>
-                <Button onClick={handleReplay} variant="outline" size="lg">
-                    <Repeat className="h-6 w-6" />
-                    <span className="sr-only">Replay current sentence</span>
                 </Button>
                 <Button onClick={togglePlayPause} variant="primary" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform">
                   {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
@@ -343,5 +382,3 @@ export default function LinguaPlayerPage() {
     </main>
   );
 }
-
-    
