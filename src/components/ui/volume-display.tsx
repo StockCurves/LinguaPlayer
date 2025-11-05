@@ -66,7 +66,6 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
   const [themePrimaryColor, setThemePrimaryColor] = useState('hsl(208 26% 64%)');
 
   useEffect(() => {
-    // Read CSS variable for primary color for the waveform
     const color = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim();
     if (color) {
       const hslValues = color.split(' ').map(parseFloat);
@@ -93,7 +92,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     if (canvas && waveformBuffer) {
         drawWaveform(canvas, waveformBuffer, themePrimaryColor);
     }
-  }, [waveformBuffer, themePrimaryColor, subtitles]); // Rerender on subtitle change for total duration adjustment
+  }, [waveformBuffer, themePrimaryColor, subtitles]);
 
 
   const totalDuration = subtitles.length > 0 ? subtitles[subtitles.length - 1].endTime : 1;
@@ -124,7 +123,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
 
   if (subtitles.length === 0) return null;
 
-  const displayWindow = 2; // Sentences to show before and after current
+  const displayWindow = 2; 
   const startIndex = Math.max(0, currentSentenceIndex - displayWindow);
   const endIndex = Math.min(subtitles.length -1, currentSentenceIndex + displayWindow);
 
@@ -154,23 +153,36 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
         const localIndex = startIndex + index;
         const startPercent = ((sub.startTime - windowStartTime) / windowDuration) * 100;
         const endPercent = ((sub.endTime - windowStartTime) / windowDuration) * 100;
-        const isCurrent = localIndex === currentSentenceIndex;
 
         return (
           <React.Fragment key={sub.id}>
             <div
-              className={cn("absolute top-0 bottom-0 border-r", isCurrent ? 'border-primary' : 'border-dashed border-primary/50')}
+              className={cn("absolute top-0 bottom-0 border-r border-dashed border-primary/50")}
               style={{ left: `${startPercent}%` }}
               title={sub.text}
             />
              <div
-              className={cn("absolute top-0 bottom-0 border-r", isCurrent ? 'border-primary' : 'border-dashed border-primary/50')}
+              className={cn("absolute top-0 bottom-0 border-r border-dashed border-primary/50")}
               style={{ left: `${endPercent}%` }}
               title={sub.text}
             />
           </React.Fragment>
         );
       })}
+      
+      {(() => {
+        const currentSub = subtitles[currentSentenceIndex];
+        if (!currentSub) return null;
+        const startPercent = ((currentSub.startTime - windowStartTime) / windowDuration) * 100;
+        const endPercent = ((currentSub.endTime - windowStartTime) / windowDuration) * 100;
+        return (
+          <div className="absolute top-0 bottom-0" style={{ left: `${startPercent}%`, width: `${endPercent - startPercent}%`}}>
+            <div className="absolute top-0 bottom-0 left-0 w-px bg-primary" />
+            <div className="absolute top-0 bottom-0 right-0 w-px bg-primary" />
+          </div>
+        )
+      })()}
+
 
       <div 
         className="absolute top-0 bottom-0 w-0.5 bg-red-500"
