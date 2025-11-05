@@ -143,6 +143,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
             ref={waveformCanvasRef} 
             className="absolute w-full h-full"
             style={{
+                imageRendering: 'pixelated',
                 left: `-${(windowStartTime / totalDuration) * 100}%`,
                 width: `${(totalDuration / windowDuration) * 100}%`,
             }}
@@ -192,3 +193,5 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     </div>
   );
 }
+
+    

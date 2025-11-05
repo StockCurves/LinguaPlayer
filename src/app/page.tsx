@@ -54,10 +54,11 @@ export default function LinguaPlayerPage() {
           if (lines.length < 2) return null;
           
           // Allow for SRT files that don't have the number index for each entry
-          const timeLineIndex = lines.length > 2 ? 1 : 0;
-          if (!lines[timeLineIndex] || !lines[timeLineIndex].includes('-->')) return null;
+          const timeLineIndex = lines.length > 2 && lines[1].includes('-->') ? 1 : lines.findIndex(l => l.includes('-->'));
+          if (timeLineIndex === -1) return null;
 
-          const id = lines.length > 2 ? parseInt(lines[0], 10) : (Math.random() * 1000);
+
+          const id = lines.length > 2 && !isNaN(parseInt(lines[0], 10)) ? parseInt(lines[0], 10) : (Math.random() * 1000);
           const timeMatch = lines[timeLineIndex].match(/(\d{2}:\d{2}:\d{2},\d{3})\s-->\s(\d{2}:\d{2}:\d{2},\d{3})/);
           if (!timeMatch) return null;
 
@@ -342,3 +343,5 @@ export default function LinguaPlayerPage() {
     </main>
   );
 }
+
+    
