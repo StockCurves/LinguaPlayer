@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useRef, useEffect, ChangeEvent, DragEvent, KeyboardEvent } from 'react';
+import { useState, useRef, useEffect, ChangeEvent, DragEvent } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
-import { Rewind, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause } from 'lucide-react';
+import { Rewind, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { VolumeDisplay } from '@/components/ui/volume-display';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 
 
 type Subtitle = {
@@ -17,6 +19,7 @@ type Subtitle = {
   startTime: number;
   endTime: number;
   text: string;
+  isStarred?: boolean;
 };
 
 export default function LinguaPlayerPage() {
@@ -28,6 +31,7 @@ export default function LinguaPlayerPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [sentenceProgress, setSentenceProgress] = useState(0);
   const [isDragging, setIsDragging] = useState<'audio' | 'srt' | null>(null);
+  const [showOnlyStarred, setShowOnlyStarred] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const sentenceScrollRef = useRef<(HTMLDivElement | null)[]>([]);
@@ -71,6 +75,7 @@ export default function LinguaPlayerPage() {
               startTime: timeToSeconds(startTimeStr),
               endTime: timeToSeconds(endTimeStr),
               text,
+              isStarred: false,
             };
           }
           return null;
@@ -135,10 +140,14 @@ export default function LinguaPlayerPage() {
 
   const playSentence = (index: number) => {
     const audio = audioRef.current;
-    const sub = subtitles[index];
+    const sub = visibleSubtitles[index];
     if (audio && sub) {
-      audio.currentTime = sub.startTime;
-      audio.play().catch(e => console.error("Audio play failed:", e));
+      const originalIndex = subtitles.findIndex(s => s.id === sub.id);
+      if (originalIndex !== -1) {
+        setCurrentSentenceIndex(originalIndex);
+        audio.currentTime = sub.startTime;
+        audio.play().catch(e => console.error("Audio play failed:", e));
+      }
     }
   };
   
@@ -146,7 +155,9 @@ export default function LinguaPlayerPage() {
     const audio = audioRef.current;
     if (audio) {
       if (audio.paused) {
-        playSentence(currentSentenceIndex);
+        // Find the index in visibleSubtitles that corresponds to currentSentenceIndex
+        const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
+        playSentence(visibleIndex !== -1 ? visibleIndex : 0);
       } else {
         audio.pause();
       }
@@ -154,17 +165,30 @@ export default function LinguaPlayerPage() {
   };
 
   const handlePrevious = () => {
-    const newIndex = Math.max(0, currentSentenceIndex - 1);
-    setCurrentSentenceIndex(newIndex);
+    const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
+    const newVisibleIndex = Math.max(0, currentVisibleIndex - 1);
+    const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
+    setCurrentSentenceIndex(newOriginalIndex);
   };
 
   const handleNext = () => {
-    const newIndex = Math.min(subtitles.length - 1, currentSentenceIndex + 1);
-    setCurrentSentenceIndex(newIndex);
+    const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
+    const newVisibleIndex = Math.min(visibleSubtitles.length - 1, currentVisibleIndex + 1);
+    const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
+    setCurrentSentenceIndex(newOriginalIndex);
   };
 
   const handleSentenceClick = (index: number) => {
-    setCurrentSentenceIndex(index);
+    const sub = visibleSubtitles[index];
+    const originalIndex = subtitles.findIndex(s => s.id === sub.id);
+    setCurrentSentenceIndex(originalIndex);
+  };
+
+  const handleStarClick = (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    setSubtitles(prev => 
+      prev.map(sub => sub.id === id ? { ...sub, isStarred: !sub.isStarred } : sub)
+    );
   };
 
   useEffect(() => {
@@ -201,28 +225,42 @@ export default function LinguaPlayerPage() {
   
   // Auto-play sentence when index changes and scroll into view
   useEffect(() => {
-    if (audioFile && srtFile) {
-        playSentence(currentSentenceIndex);
+    if (audioFile && srtFile && subtitles.length > 0) {
+      const currentSub = subtitles[currentSentenceIndex];
+      if (currentSub) {
+        const audio = audioRef.current;
+        if (audio) {
+            audio.currentTime = currentSub.startTime;
+            audio.play().catch(e => console.error("Audio play failed:", e));
+        }
+      }
+      
+      const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub?.id);
+      if (visibleIndex !== -1) {
+        sentenceScrollRef.current[visibleIndex]?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center'
+        });
+      }
     }
-    sentenceScrollRef.current[currentSentenceIndex]?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'center'
-    });
-  }, [currentSentenceIndex, audioFile, srtFile]);
+  }, [currentSentenceIndex, audioFile, srtFile, subtitles, showOnlyStarred]);
+
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
       if (!audioFile || !srtFile) return;
 
-      // Prevent default for spacebar scrolling
-      if (e.code === 'Space') {
-          e.preventDefault();
-      }
-      
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
+      
+      // Prevent default for spacebar and arrow keys scrolling
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+          e.preventDefault();
+      }
+      
+      const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
       
       switch (e.code) {
         case 'Space':
@@ -235,15 +273,24 @@ export default function LinguaPlayerPage() {
           handleNext();
           break;
         case 'ArrowUp':
-          e.preventDefault();
-          handlePrevious();
+          if (currentVisibleIndex > 0) {
+            const prevSub = visibleSubtitles[currentVisibleIndex - 1];
+            const originalIndex = subtitles.findIndex(s => s.id === prevSub.id);
+            setCurrentSentenceIndex(originalIndex);
+          }
           break;
         case 'ArrowDown':
-          e.preventDefault();
-          handleNext();
+           if (currentVisibleIndex < visibleSubtitles.length - 1) {
+            const nextSub = visibleSubtitles[currentVisibleIndex + 1];
+            const originalIndex = subtitles.findIndex(s => s.id === nextSub.id);
+            setCurrentSentenceIndex(originalIndex);
+          }
           break;
         case 'Enter':
-          playSentence(currentSentenceIndex);
+          {
+            const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
+            playSentence(visibleIndex);
+          }
           break;
       }
     };
@@ -253,8 +300,10 @@ export default function LinguaPlayerPage() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [audioFile, srtFile, currentSentenceIndex, subtitles]);
+  }, [audioFile, srtFile, currentSentenceIndex, subtitles, showOnlyStarred]);
 
+  const hasStarredSentences = subtitles.some(sub => sub.isStarred);
+  const visibleSubtitles = showOnlyStarred ? subtitles.filter(sub => sub.isStarred) : subtitles;
 
   const UploadBox = ({ type }: { type: 'audio' | 'srt' }) => {
     const file = type === 'audio' ? audioFile : srtFile;
@@ -339,29 +388,44 @@ export default function LinguaPlayerPage() {
                 </Button>
               </div>
 
+              {hasStarredSentences && (
+                <div className="flex items-center justify-center space-x-2">
+                  <Switch
+                    id="show-starred"
+                    checked={showOnlyStarred}
+                    onCheckedChange={setShowOnlyStarred}
+                  />
+                  <Label htmlFor="show-starred">Show Starred Only</Label>
+                </div>
+              )}
+
               <ScrollArea className="h-40 w-full rounded-md border p-4">
                 <div className="flex flex-col gap-2">
-                  {subtitles.map((sub, index) => (
+                  {visibleSubtitles.map((sub, index) => (
                     <div
                       key={sub.id}
                       ref={el => sentenceScrollRef.current[index] = el}
                       onClick={() => handleSentenceClick(index)}
                       className={cn(
-                        "cursor-pointer rounded-md p-2 transition-colors",
-                        index === currentSentenceIndex
+                        "cursor-pointer rounded-md p-2 transition-colors flex items-start gap-3",
+                        sub.id === subtitles[currentSentenceIndex]?.id
                           ? 'bg-accent/20'
                           : 'hover:bg-accent/10'
                       )}
                     >
+                      <button onClick={(e) => handleStarClick(e, sub.id)} className="p-1 -ml-1 text-muted-foreground hover:text-amber-500 transition-colors">
+                        <Star className={cn("w-4 h-4", sub.isStarred ? 'text-amber-400 fill-amber-400' : 'text-muted-foreground')}/>
+                        <span className="sr-only">Star sentence</span>
+                      </button>
                       <p
                         className={cn(
-                          "flex items-start gap-3",
-                          index === currentSentenceIndex
+                          "flex-1",
+                          sub.id === subtitles[currentSentenceIndex]?.id
                             ? 'font-bold text-foreground'
                             : 'text-muted-foreground'
                         )}
                       >
-                        <span className={cn(index === currentSentenceIndex ? 'text-primary' : '')}>{index + 1}.</span>
+                        <span className={cn("mr-2", sub.id === subtitles[currentSentenceIndex]?.id ? 'text-primary' : '')}>{subtitles.findIndex(s => s.id === sub.id) + 1}.</span>
                         <span>{sub.text}</span>
                       </p>
                     </div>
@@ -372,9 +436,9 @@ export default function LinguaPlayerPage() {
             </div>
           )}
         </CardContent>
-        { audioFile && srtFile && subtitles.length > 0 && (
+        { audioFile && srtFile && visibleSubtitles.length > 0 && (
           <CardFooter className="flex justify-center text-sm text-muted-foreground pt-4">
-            Sentence {currentSentenceIndex + 1} of {subtitles.length}
+             Sentence {subtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) + 1} of {subtitles.length}
           </CardFooter>
         )}
       </Card>
