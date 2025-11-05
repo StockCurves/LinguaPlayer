@@ -39,7 +39,7 @@ export default function LinguaPlayerPage() {
   const { toast } = useToast();
   
   const hasStarredSentences = subtitles.some(sub => sub.isStarred);
-  const visibleSubtitles = showOnlyStarred ? subtitles.filter(sub => sub.isStarred) : subtitles;
+  const visibleSubtitles = showOnlyStarred && hasStarredSentences ? subtitles.filter(sub => sub.isStarred) : subtitles;
 
   const parseSrt = (srtText: string) => {
     try {
@@ -233,6 +233,12 @@ export default function LinguaPlayerPage() {
             setCurrentSentenceIndex(newIndex);
         }
     }
+
+    // If all stars are removed, switch back to showing all sentences
+    const anyStarred = newSubtitles.some(sub => sub.isStarred);
+    if (!anyStarred) {
+      setShowOnlyStarred(false);
+    }
   };
 
   useEffect(() => {
@@ -342,7 +348,7 @@ export default function LinguaPlayerPage() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [audioFile, srtFile, currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles]);
+  }, [audioFile, srtFile, currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles, handleNext, handlePrevious, togglePlayPause]);
 
   const UploadBox = ({ type }: { type: 'audio' | 'srt' }) => {
     const file = type === 'audio' ? audioFile : srtFile;
