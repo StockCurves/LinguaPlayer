@@ -27,7 +27,7 @@ export default function LinguaPlayerPage() {
   const [srtFile, setSrtFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [subtitles, setSubtitles] = useState<Subtitle[]>([]);
-  const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0);
+  const [currentSentenceIndex, setCurrentSentenceIndex] = useState(-1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [sentenceProgress, setSentenceProgress] = useState(0);
   const [isDragging, setIsDragging] = useState<'audio' | 'srt' | null>(null);
@@ -147,18 +147,14 @@ export default function LinguaPlayerPage() {
     if (!audio) return;
   
     // Check if we are playing from the visible list or the full list
-    const sub = visibleSubtitles[index];
+    const sub = subtitles[index];
     if (sub) {
-      // Find the corresponding index in the original subtitles array
-      const originalIndex = subtitles.findIndex(s => s.id === sub.id);
-      if (originalIndex !== -1) {
         // Always set the main index state based on the original list
-        setCurrentSentenceIndex(originalIndex);
+        setCurrentSentenceIndex(index);
         audio.currentTime = sub.startTime;
         if (audio.paused) {
           audio.play().catch(e => console.error("Audio play failed:", e));
         }
-      }
     }
   };
   
@@ -170,21 +166,18 @@ export default function LinguaPlayerPage() {
         if (sub) {
           // If playback is at the end of a sentence, start the next one
           if (audio.currentTime >= sub.endTime - 0.1) {
-              const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === sub.id);
-              if (currentVisibleIndex < visibleSubtitles.length - 1) {
-                  handleNext();
-                  // We need to wait for the state to update, so we play in the next render cycle.
-                  setTimeout(() => {
-                      const nextSub = subtitles[currentSentenceIndex + 1];
-                      if(nextSub) {
-                        audio.currentTime = nextSub.startTime;
-                        audio.play().catch(e => console.error("Audio play failed:", e));
-                      }
-                  }, 0);
-              }
+              handleNext();
+              // We need to wait for the state to update, so we play in the next render cycle.
+              setTimeout(() => {
+                  const nextSub = subtitles[currentSentenceIndex + 1];
+                  if(nextSub) {
+                    audio.currentTime = nextSub.startTime;
+                    audio.play().catch(e => console.error("Audio play failed:", e));
+                  }
+              }, 0);
           } else {
             // If paused mid-sentence, just resume.
-            audio.play().catch(e => console.error("Audio play failed:", e));
+             playSentence(currentSentenceIndex);
           }
         }
       } else {
@@ -216,7 +209,12 @@ export default function LinguaPlayerPage() {
   };
 
   const handleSentenceClick = (index: number) => {
-    playSentence(index);
+    // index is from visibleSubtitles
+    const sub = visibleSubtitles[index];
+    if (sub) {
+        const originalIndex = subtitles.findIndex(s => s.id === sub.id);
+        playSentence(originalIndex);
+    }
   };
 
   const handleStarClick = (e: React.MouseEvent, id: number) => {
@@ -260,6 +258,7 @@ export default function LinguaPlayerPage() {
   };
 
   useEffect(() => {
+    if (currentSentenceIndex === -1) return;
     const audio = audioRef.current;
     if (!audio || !subtitles.length) return;
 
@@ -293,7 +292,7 @@ export default function LinguaPlayerPage() {
   
   // Auto-scroll into view when index changes
   useEffect(() => {
-    if (audioFile && srtFile && subtitles.length > 0) {
+    if (audioFile && srtFile && subtitles.length > 0 && currentSentenceIndex !== -1) {
       const currentSub = subtitles[currentSentenceIndex];
       const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub?.id);
       
@@ -310,7 +309,7 @@ export default function LinguaPlayerPage() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
-      if (!audioFile || !srtFile) return;
+      if (!audioFile || !srtFile || currentSentenceIndex === -1) return;
 
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
@@ -352,10 +351,7 @@ export default function LinguaPlayerPage() {
           break;
         case 'Enter':
           {
-            const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
-            if (visibleIndex !== -1) {
-              playSentence(visibleIndex);
-            }
+            playSentence(currentSentenceIndex);
           }
           break;
       }
@@ -432,16 +428,16 @@ export default function LinguaPlayerPage() {
               />
               <div className="text-center p-4 sm:p-6 bg-secondary/50 rounded-lg min-h-[10rem] flex items-center justify-center border">
                 <p className="text-xl sm:text-2xl font-medium text-foreground">
-                  {subtitles.length > 0 ? subtitles[currentSentenceIndex]?.text : "Loading subtitles..."}
+                  {subtitles.length > 0 && currentSentenceIndex !== -1 ? subtitles[currentSentenceIndex]?.text : "Load your audio and srt file to begin."}
                 </p>
               </div>
               <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
               <div className="flex justify-center items-center gap-2 sm:gap-4">
-                <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
+                <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
                   <Rewind className="h-6 w-6" />
                   <span className="sr-only">Previous sentence</span>
                 </Button>
-                <Button onClick={togglePlayPause} variant="primary" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform">
+                <Button onClick={togglePlayPause} variant="primary" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
                   {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
                   <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
                 </Button>
@@ -502,7 +498,7 @@ export default function LinguaPlayerPage() {
             </div>
           )}
         </CardContent>
-        { audioFile && srtFile && visibleSubtitles.length > 0 && (
+        { audioFile && srtFile && visibleSubtitles.length > 0 && currentSentenceIndex !== -1 && (
           <CardFooter className="flex justify-center text-sm text-muted-foreground pt-4">
              Sentence {subtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) + 1} of {subtitles.length}
           </CardFooter>
