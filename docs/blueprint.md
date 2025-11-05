@@ -5,6 +5,7 @@
 - File Upload: Allow users to upload .mp3 and .srt files.
 - Sentence-by-Sentence Playback: Play the audio file sentence by sentence based on the .srt file.
 - Playback Controls: Provide 'previous sentence', 'current sentence', and 'next sentence' buttons.
+- Sentence History: Display the list of sentences in a sheet component (`sheet.tsx`) for easy review.
 
 ## Style Guidelines:
 
