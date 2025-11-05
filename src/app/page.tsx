@@ -9,6 +9,7 @@ import { Rewind, Repeat, FastForward, UploadCloud, FileAudio, FileText, CheckCir
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { VolumeDisplay } from '@/components/ui/volume-display';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 
 type Subtitle = {
@@ -29,6 +30,7 @@ export default function LinguaPlayerPage() {
   const [isDragging, setIsDragging] = useState<'audio' | 'srt' | null>(null);
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  const sentenceScrollRef = useRef<(HTMLDivElement | null)[]>([]);
   const { toast } = useToast();
 
   const parseSrt = (srtText: string) => {
@@ -80,6 +82,7 @@ export default function LinguaPlayerPage() {
 
       setSubtitles(subs);
       setCurrentSentenceIndex(0);
+      sentenceScrollRef.current = sentenceScrollRef.current.slice(0, subs.length);
     } catch (error) {
       console.error("SRT Parsing Error:", error);
       toast({
@@ -161,6 +164,10 @@ export default function LinguaPlayerPage() {
     setCurrentSentenceIndex(newIndex);
   };
 
+  const handleSentenceClick = (index: number) => {
+    setCurrentSentenceIndex(index);
+  };
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !subtitles.length) return;
@@ -193,11 +200,15 @@ export default function LinguaPlayerPage() {
     };
   }, [audioRef, subtitles, currentSentenceIndex]);
   
-  // Auto-play sentence when index changes
+  // Auto-play sentence when index changes and scroll into view
   useEffect(() => {
     if (audioFile && srtFile) {
         playSentence(currentSentenceIndex);
     }
+    sentenceScrollRef.current[currentSentenceIndex]?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center'
+    });
   }, [currentSentenceIndex, audioFile, srtFile]);
 
 
@@ -287,6 +298,37 @@ export default function LinguaPlayerPage() {
                   <span className="sr-only">Next sentence</span>
                 </Button>
               </div>
+
+              <ScrollArea className="h-40 w-full rounded-md border p-4">
+                <div className="flex flex-col gap-2">
+                  {subtitles.map((sub, index) => (
+                    <div
+                      key={sub.id}
+                      ref={el => sentenceScrollRef.current[index] = el}
+                      onClick={() => handleSentenceClick(index)}
+                      className={cn(
+                        "cursor-pointer rounded-md p-2 transition-colors",
+                        index === currentSentenceIndex
+                          ? 'bg-accent/20'
+                          : 'hover:bg-accent/10'
+                      )}
+                    >
+                      <p
+                        className={cn(
+                          "flex items-start gap-3",
+                          index === currentSentenceIndex
+                            ? 'font-bold text-foreground'
+                            : 'text-muted-foreground'
+                        )}
+                      >
+                        <span className={cn(index === currentSentenceIndex ? 'text-primary' : '')}>{index + 1}.</span>
+                        <span>{sub.text}</span>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+              
             </div>
           )}
         </CardContent>

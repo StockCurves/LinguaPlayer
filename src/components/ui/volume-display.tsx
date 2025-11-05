@@ -47,8 +47,8 @@ const drawWaveform = (canvas: HTMLCanvasElement, audioBuffer: AudioBuffer, color
         }
         
         const x = i;
-        const y_max = (max * middleY) + middleY;
-        const y_min = (min * middleY) + middleY;
+        const y_max = (Math.abs(max) * height) / 2 + middleY;
+        const y_min = middleY - (Math.abs(min) * height) / 2;
 
         ctx.moveTo(x, y_max);
         ctx.lineTo(x, y_min);
@@ -151,18 +151,19 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
       
       {displayedSubtitles.map((sub, index) => {
         const localIndex = startIndex + index;
+        const isCurrent = localIndex === currentSentenceIndex;
         const startPercent = ((sub.startTime - windowStartTime) / windowDuration) * 100;
         const endPercent = ((sub.endTime - windowStartTime) / windowDuration) * 100;
 
         return (
           <React.Fragment key={sub.id}>
             <div
-              className={cn("absolute top-0 bottom-0 border-r border-dashed border-primary/50")}
+              className={cn("absolute top-0 bottom-0 border-r", isCurrent ? "border-primary" : "border-primary/50 border-dashed" )}
               style={{ left: `${startPercent}%` }}
               title={sub.text}
             />
              <div
-              className={cn("absolute top-0 bottom-0 border-r border-dashed border-primary/50")}
+              className={cn("absolute top-0 bottom-0 border-r", isCurrent ? "border-primary" : "border-primary/50 border-dashed" )}
               style={{ left: `${endPercent}%` }}
               title={sub.text}
             />
@@ -176,9 +177,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
         const startPercent = ((currentSub.startTime - windowStartTime) / windowDuration) * 100;
         const endPercent = ((currentSub.endTime - windowStartTime) / windowDuration) * 100;
         return (
-          <div className="absolute top-0 bottom-0" style={{ left: `${startPercent}%`, width: `${endPercent - startPercent}%`}}>
-            <div className="absolute top-0 bottom-0 left-0 w-px bg-primary" />
-            <div className="absolute top-0 bottom-0 right-0 w-px bg-primary" />
+          <div className="absolute top-0 bottom-0 bg-primary/20" style={{ left: `${startPercent}%`, width: `${endPercent - startPercent}%`}}>
           </div>
         )
       })()}
