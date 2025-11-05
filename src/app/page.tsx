@@ -37,6 +37,9 @@ export default function LinguaPlayerPage() {
   const sentenceScrollRef = useRef<(HTMLDivElement | null)[]>([]);
   const mainContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  
+  const hasStarredSentences = subtitles.some(sub => sub.isStarred);
+  const visibleSubtitles = showOnlyStarred ? subtitles.filter(sub => sub.isStarred) : subtitles;
 
   const parseSrt = (srtText: string) => {
     try {
@@ -154,10 +157,28 @@ export default function LinguaPlayerPage() {
   const togglePlayPause = () => {
     const audio = audioRef.current;
     if (audio) {
-      if (audio.paused) {
-        // Find the index in visibleSubtitles that corresponds to currentSentenceIndex
-        const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
-        playSentence(visibleIndex !== -1 ? visibleIndex : 0);
+        if (audio.paused && audioUrl && srtFile) {
+        const sub = subtitles[currentSentenceIndex];
+        if (sub) {
+          // If playback is at the end of a sentence, start the next one
+          if (audio.currentTime >= sub.endTime - 0.1) {
+              const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === sub.id);
+              if (currentVisibleIndex < visibleSubtitles.length - 1) {
+                  handleNext();
+                  // We need to wait for the state to update, so we play in the next render cycle.
+                  setTimeout(() => {
+                      const nextSub = subtitles[currentSentenceIndex + 1];
+                      if(nextSub) {
+                        audio.currentTime = nextSub.startTime;
+                        audio.play().catch(e => console.error("Audio play failed:", e));
+                      }
+                  }, 0);
+              }
+          } else {
+            // If paused mid-sentence, just resume.
+            audio.play().catch(e => console.error("Audio play failed:", e));
+          }
+        }
       } else {
         audio.pause();
       }
@@ -166,22 +187,27 @@ export default function LinguaPlayerPage() {
 
   const handlePrevious = () => {
     const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
-    const newVisibleIndex = Math.max(0, currentVisibleIndex - 1);
-    const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
-    setCurrentSentenceIndex(newOriginalIndex);
+    if (currentVisibleIndex > 0) {
+      const newVisibleIndex = currentVisibleIndex - 1;
+      const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
+      setCurrentSentenceIndex(newOriginalIndex);
+    }
   };
 
   const handleNext = () => {
     const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
-    const newVisibleIndex = Math.min(visibleSubtitles.length - 1, currentVisibleIndex + 1);
-    const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
-    setCurrentSentenceIndex(newOriginalIndex);
+    if (currentVisibleIndex < visibleSubtitles.length - 1) {
+      const newVisibleIndex = currentVisibleIndex + 1;
+      const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
+      setCurrentSentenceIndex(newOriginalIndex);
+    }
   };
 
   const handleSentenceClick = (index: number) => {
     const sub = visibleSubtitles[index];
     const originalIndex = subtitles.findIndex(s => s.id === sub.id);
     setCurrentSentenceIndex(originalIndex);
+    playSentence(index);
   };
 
   const handleStarClick = (e: React.MouseEvent, id: number) => {
@@ -199,8 +225,9 @@ export default function LinguaPlayerPage() {
       const sub = subtitles[currentSentenceIndex];
       if (!sub) return;
 
-      if (audio.currentTime >= sub.endTime) {
+      if (isPlaying && audio.currentTime >= sub.endTime) {
         audio.pause();
+        setIsPlaying(false);
       }
       
       const duration = sub.endTime - sub.startTime;
@@ -221,21 +248,14 @@ export default function LinguaPlayerPage() {
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('pause', onPause);
     };
-  }, [audioRef, subtitles, currentSentenceIndex]);
+  }, [audioRef, subtitles, currentSentenceIndex, isPlaying]);
   
-  // Auto-play sentence when index changes and scroll into view
+  // Auto-scroll into view when index changes
   useEffect(() => {
     if (audioFile && srtFile && subtitles.length > 0) {
       const currentSub = subtitles[currentSentenceIndex];
-      if (currentSub) {
-        const audio = audioRef.current;
-        if (audio) {
-            audio.currentTime = currentSub.startTime;
-            audio.play().catch(e => console.error("Audio play failed:", e));
-        }
-      }
-      
       const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub?.id);
+      
       if (visibleIndex !== -1) {
         sentenceScrollRef.current[visibleIndex]?.scrollIntoView({
           behavior: 'smooth',
@@ -243,7 +263,7 @@ export default function LinguaPlayerPage() {
         });
       }
     }
-  }, [currentSentenceIndex, audioFile, srtFile, subtitles, showOnlyStarred]);
+  }, [currentSentenceIndex, audioFile, srtFile, subtitles, showOnlyStarred, visibleSubtitles]);
 
 
   // Keyboard shortcuts
@@ -260,7 +280,7 @@ export default function LinguaPlayerPage() {
           e.preventDefault();
       }
       
-      const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
+      const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex]?.id);
       
       switch (e.code) {
         case 'Space':
@@ -289,7 +309,9 @@ export default function LinguaPlayerPage() {
         case 'Enter':
           {
             const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === subtitles[currentSentenceIndex].id);
-            playSentence(visibleIndex);
+            if (visibleIndex !== -1) {
+              playSentence(visibleIndex);
+            }
           }
           break;
       }
@@ -300,10 +322,7 @@ export default function LinguaPlayerPage() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [audioFile, srtFile, currentSentenceIndex, subtitles, showOnlyStarred]);
-
-  const hasStarredSentences = subtitles.some(sub => sub.isStarred);
-  const visibleSubtitles = showOnlyStarred ? subtitles.filter(sub => sub.isStarred) : subtitles;
+  }, [audioFile, srtFile, currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles]);
 
   const UploadBox = ({ type }: { type: 'audio' | 'srt' }) => {
     const file = type === 'audio' ? audioFile : srtFile;
