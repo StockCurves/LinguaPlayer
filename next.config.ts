@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
   output: 'export',
   assetPrefix: assetPrefix,
   basePath: basePath,
+  trailingSlash: true,
   /* config options here */
   typescript: {
     ignoreBuildErrors: true,
