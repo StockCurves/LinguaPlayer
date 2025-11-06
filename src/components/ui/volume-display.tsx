@@ -64,11 +64,9 @@ const drawWaveform = (canvas: HTMLCanvasElement, audioBuffer: AudioBuffer, color
 
 
 export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, audioFile }: VolumeDisplayProps) {
-  const [cursorPosition, setCursorPosition] = useState(0);
   const [waveformBuffer, setWaveformBuffer] = useState<AudioBuffer | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
-  const animationFrameRef = useRef<number>();
   const [themePrimaryColor, setThemePrimaryColor] = useState('hsl(208 26% 64%)');
 
   useEffect(() => {
@@ -96,51 +94,23 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
   useEffect(() => {
     const canvas = waveformCanvasRef.current;
     if (canvas && waveformBuffer) {
+        // Redraw on window resize
+        const resizeObserver = new ResizeObserver(() => {
+            drawWaveform(canvas, waveformBuffer, themePrimaryColor);
+        });
+        resizeObserver.observe(canvas);
+        
         drawWaveform(canvas, waveformBuffer, themePrimaryColor);
+
+        return () => resizeObserver.disconnect();
     }
-  }, [waveformBuffer, themePrimaryColor, subtitles]);
+  }, [waveformBuffer, themePrimaryColor]);
 
 
-  const totalDuration = subtitles.length > 0 ? subtitles[subtitles.length - 1].endTime : 1;
+  const totalDuration = audioElement?.duration || (subtitles.length > 0 ? subtitles[subtitles.length - 1].endTime : 1);
+  const currentTime = audioElement?.currentTime ?? 0;
 
-  useEffect(() => {
-    const updateCursor = () => {
-      if (!audioElement || !containerRef.current) {
-        animationFrameRef.current = requestAnimationFrame(updateCursor);
-        return;
-      }
-
-      let newPosition = (audioElement.currentTime / totalDuration) * 100;
-      newPosition = Math.max(0, Math.min(100, newPosition));
-
-      setCursorPosition(newPosition);
-      animationFrameRef.current = requestAnimationFrame(updateCursor);
-    };
-
-    animationFrameRef.current = requestAnimationFrame(updateCursor);
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [audioElement, totalDuration]);
-  
-
-  if (subtitles.length === 0) return null;
-
-  const displayWindow = 2; 
-  const startIndex = Math.max(0, currentSentenceIndex - displayWindow);
-  const endIndex = Math.min(subtitles.length -1, currentSentenceIndex + displayWindow);
-
-  const displayedSubtitles = subtitles.slice(startIndex, endIndex + 1);
-
-  const windowStartTime = subtitles[startIndex].startTime;
-  const windowEndTime = subtitles[endIndex].endTime;
-  const windowDuration = windowEndTime - windowStartTime;
-  
-  if (windowDuration <= 0) return null;
-
+  if (subtitles.length === 0 || !audioElement) return null;
 
   return (
     <div ref={containerRef} className="relative w-full h-20 bg-secondary/30 rounded-lg flex items-end overflow-hidden">
@@ -148,29 +118,23 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
         <canvas 
             ref={waveformCanvasRef} 
             className="absolute w-full h-full"
-            style={{
-                imageRendering: 'pixelated',
-                left: `-${(windowStartTime / totalDuration) * 100}%`,
-                width: `${(totalDuration / windowDuration) * 100}%`,
-            }}
+            style={{ imageRendering: 'pixelated' }}
         />
       </div>
       
-      {displayedSubtitles.map((sub, index) => {
-        const localIndex = startIndex + index;
-        const isCurrent = localIndex === currentSentenceIndex;
-        const startPercent = ((sub.startTime - windowStartTime) / windowDuration) * 100;
-        const endPercent = ((sub.endTime - windowStartTime) / windowDuration) * 100;
+      {subtitles.map((sub) => {
+        const startPercent = (sub.startTime / totalDuration) * 100;
+        const endPercent = (sub.endTime / totalDuration) * 100;
 
         return (
           <React.Fragment key={sub.id}>
             <div
-              className={cn("absolute top-0 bottom-0 border-r", isCurrent ? "border-primary" : "border-primary/50 border-dashed" )}
+              className="absolute top-0 bottom-0 border-r border-primary/50 border-dashed"
               style={{ left: `${startPercent}%` }}
               title={sub.text}
             />
              <div
-              className={cn("absolute top-0 bottom-0 border-r", isCurrent ? "border-primary" : "border-primary/50 border-dashed" )}
+              className="absolute top-0 bottom-0 border-r border-primary/50 border-dashed"
               style={{ left: `${endPercent}%` }}
               title={sub.text}
             />
@@ -181,10 +145,18 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
       {(() => {
         const currentSub = subtitles[currentSentenceIndex];
         if (!currentSub) return null;
-        const startPercent = ((currentSub.startTime - windowStartTime) / windowDuration) * 100;
-        const endPercent = ((currentSub.endTime - windowStartTime) / windowDuration) * 100;
+        const startPercent = (currentSub.startTime / totalDuration) * 100;
+        const endPercent = (currentSub.endTime / totalDuration) * 100;
         return (
           <div className="absolute top-0 bottom-0 bg-primary/20" style={{ left: `${startPercent}%`, width: `${endPercent - startPercent}%`}}>
+             <div
+              className="absolute top-0 bottom-0 border-r-2 border-primary"
+              style={{ left: `0%` }}
+            />
+             <div
+              className="absolute top-0 bottom-0 border-r-2 border-primary"
+              style={{ right: `0%` }}
+            />
           </div>
         )
       })()}
@@ -192,7 +164,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
 
       <div 
         className="absolute top-0 bottom-0 w-0.5 bg-red-500"
-        style={{ left: `${((audioElement?.currentTime ?? 0) - windowStartTime) / windowDuration * 100}%` }}
+        style={{ left: `${(currentTime / totalDuration) * 100}%` }}
       >
         <div className="absolute -top-1 -left-1 w-3 h-3 bg-red-500 rounded-full"></div>
       </div>
