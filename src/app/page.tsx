@@ -53,15 +53,19 @@ export default function LinguaPlayerPage() {
     return time.replace('.', ',');
   };
 
-  const updateSrtContent = (updatedSubtitles: Subtitle[]) => {
-    // This regenerates the SRT string content from the subtitles array.
-    // It assumes the subtitles are ordered correctly.
-    let newSrtContent = '';
-    updatedSubtitles.forEach((sub, index) => {
-        newSrtContent += `${sub.id}\n`;
-        newSrtContent += `${secondsToSrtTime(sub.startTime)} --> ${secondsToSrtTime(sub.endTime)}\n`;
-        newSrtContent += `${sub.text}\n\n`;
+  const generateSrtContent = (subs: Subtitle[]) => {
+    let content = '';
+    subs.forEach((sub, index) => {
+        // When generating SRT for a filtered list, we need to re-number the IDs.
+        content += `${index + 1}\n`;
+        content += `${secondsToSrtTime(sub.startTime)} --> ${secondsToSrtTime(sub.endTime)}\n`;
+        content += `${sub.text}\n\n`;
     });
+    return content;
+  }
+
+  const updateSrtContent = (updatedSubtitles: Subtitle[]) => {
+    const newSrtContent = generateSrtContent(updatedSubtitles);
     setSrtContent(newSrtContent);
   };
 
@@ -71,10 +75,10 @@ export default function LinguaPlayerPage() {
       const timeToSeconds = (time: string): number => {
         const timeString = time.replace(',', '.');
         const parts = timeString.split(':');
-        if (parts.length !== 3) throw new Error(`Invalid time format: ${time}`);
+        if (parts.length !== 3) throw new Error('Invalid time format: ' + time);
         
         const secondsParts = parts[2].split('.');
-        if (secondsParts.length !== 2) throw new Error(`Invalid seconds format in time: ${time}`);
+        if (secondsParts.length !== 2) throw new Error('Invalid seconds format in time: ' + time);
 
         const hours = parseInt(parts[0], 10);
         const minutes = parseInt(parts[1], 10);
@@ -373,13 +377,20 @@ export default function LinguaPlayerPage() {
 
   const handleDownloadSrt = () => {
     if (!srtFile) return;
+
+    const subsToDownload = showOnlyStarred ? visibleSubtitles : subtitles;
+    const content = generateSrtContent(subsToDownload);
+
     const fileName = srtFile.name.replace('.srt', '_edited.srt');
-    downloadFile(srtContent, fileName, 'text/plain');
+    downloadFile(content, fileName, 'text/plain');
   };
 
   const handleDownloadTxt = () => {
     if (!srtFile) return;
-    const textContent = subtitles.map(sub => sub.text).join('\n');
+
+    const subsToDownload = showOnlyStarred ? visibleSubtitles : subtitles;
+    const textContent = subsToDownload.map(sub => sub.text).join('\n');
+    
     const fileName = srtFile.name.replace('.srt', '.txt');
     downloadFile(textContent, fileName, 'text/plain');
   };
