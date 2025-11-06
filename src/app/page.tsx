@@ -145,11 +145,9 @@ export default function LinguaPlayerPage() {
   const playSentence = (index: number) => {
     const audio = audioRef.current;
     if (!audio) return;
-  
-    // Check if we are playing from the visible list or the full list
+
     const sub = subtitles[index];
     if (sub) {
-        // Always set the main index state based on the original list
         setCurrentSentenceIndex(index);
         audio.currentTime = sub.startTime;
         if (audio.paused) {
@@ -161,22 +159,22 @@ export default function LinguaPlayerPage() {
   const togglePlayPause = () => {
     const audio = audioRef.current;
     if (audio) {
-        if (audio.paused && audioUrl && srtFile) {
-          const sub = subtitles[currentSentenceIndex];
-          if (sub) {
-            // If playback is at the end of a sentence, start the next one
-            if (audio.currentTime >= sub.endTime - 0.1) {
-              const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === sub.id);
-              if (currentVisibleIndex < visibleSubtitles.length - 1) {
-                const nextVisibleSub = visibleSubtitles[currentVisibleIndex + 1];
-                const nextOriginalIndex = subtitles.findIndex(s => s.id === nextVisibleSub.id);
-                playSentence(nextOriginalIndex);
-              }
-            } else {
-              // If paused mid-sentence, just resume.
-               playSentence(currentSentenceIndex);
+      if (audio.paused && audioUrl && srtFile) {
+        const sub = subtitles[currentSentenceIndex];
+        if (sub) {
+          // If playback is at the end of a sentence, start the next one
+          if (audio.currentTime >= sub.endTime - 0.1) {
+            const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === sub.id);
+            if (currentVisibleIndex < visibleSubtitles.length - 1) {
+              const nextVisibleSub = visibleSubtitles[currentVisibleIndex + 1];
+              const nextOriginalIndex = subtitles.findIndex(s => s.id === nextVisibleSub.id);
+              playSentence(nextOriginalIndex);
             }
+          } else {
+            // If paused mid-sentence, just resume from the current highlighted sentence.
+            playSentence(currentSentenceIndex);
           }
+        }
       } else {
         audio.pause();
       }
@@ -231,14 +229,11 @@ export default function LinguaPlayerPage() {
         sub.id === id ? { ...sub, isStarred: !sub.isStarred } : sub
       );
 
-      // Find the original index of the starred/unstarred item
       const newIndex = newSubtitles.findIndex(sub => sub.id === id);
       if (newIndex !== -1) {
-        // Set it as the current sentence, but don't play
         setCurrentSentenceIndex(newIndex);
       }
       
-      // If all stars are removed, switch back to showing all sentences
       const anyStarred = newSubtitles.some(sub => sub.isStarred);
       if (!anyStarred) {
         setShowOnlyStarred(false);
@@ -250,7 +245,6 @@ export default function LinguaPlayerPage() {
 
   const handleShowStarredToggle = (checked: boolean) => {
     if (checked) {
-      // When turning on, save the current index and find the first starred item.
       lastUnfilteredIndexRef.current = currentSentenceIndex;
       const firstStarredSub = subtitles.find(sub => sub.isStarred);
       if (firstStarredSub) {
@@ -258,7 +252,6 @@ export default function LinguaPlayerPage() {
         setCurrentSentenceIndex(firstStarredIndex);
       }
     } else {
-      // When turning off, restore the last known index.
       setCurrentSentenceIndex(lastUnfilteredIndexRef.current);
     }
     setShowOnlyStarred(checked);
@@ -297,7 +290,6 @@ export default function LinguaPlayerPage() {
     };
   }, [audioRef, subtitles, currentSentenceIndex, isPlaying]);
   
-  // Auto-scroll into view when index changes
   useEffect(() => {
     if (audioFile && srtFile && subtitles.length > 0 && currentSentenceIndex !== -1) {
       const currentSub = subtitles[currentSentenceIndex];
@@ -313,7 +305,6 @@ export default function LinguaPlayerPage() {
   }, [currentSentenceIndex, audioFile, srtFile, subtitles, showOnlyStarred, visibleSubtitles]);
 
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
       if (!audioFile || !srtFile || currentSentenceIndex === -1) return;
@@ -325,7 +316,6 @@ export default function LinguaPlayerPage() {
       const currentSub = subtitles[currentSentenceIndex];
       if (!currentSub) return;
       
-      // Prevent default for spacebar and arrow keys scrolling
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
           e.preventDefault();
       }
