@@ -22,10 +22,14 @@ const drawWaveform = (canvas: HTMLCanvasElement, audioBuffer: AudioBuffer, color
     if (!ctx) return;
 
     const channelData = audioBuffer.getChannelData(0);
-    const { width, height } = canvas;
+    const { width, height } = canvas.getBoundingClientRect(); // Use bounding rect for actual display size
     const dpr = window.devicePixelRatio || 1;
+    
+    // Set canvas physical size to match display size scaled by DPR
     canvas.width = width * dpr;
     canvas.height = height * dpr;
+
+    // Scale context to match DPR
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, width, height);
 
@@ -47,11 +51,13 @@ const drawWaveform = (canvas: HTMLCanvasElement, audioBuffer: AudioBuffer, color
         }
         
         const x = i;
-        const y_max = (Math.abs(max) * height) / 2 + middleY;
-        const y_min = middleY - (Math.abs(min) * height) / 2;
+        // Calculate line height based on amplitude, centered vertically
+        const lineHeight = (max - min) * (height / 2);
+        const y_top = middleY - (lineHeight / 2);
+        const y_bottom = middleY + (lineHeight / 2);
 
-        ctx.moveTo(x, y_max);
-        ctx.lineTo(x, y_min);
+        ctx.moveTo(x, y_top);
+        ctx.lineTo(x, y_bottom);
     }
     ctx.stroke();
 };
@@ -193,5 +199,3 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     </div>
   );
 }
-
-    
