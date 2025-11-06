@@ -112,10 +112,6 @@ export function PlayerView({
   };
 
   const handlePrevious = () => {
-    const audio = audioRef.current;
-    if(!audio) return;
-    audio.pause();
-
     const currentSub = subtitles[currentSentenceIndex];
     if (!currentSub) return;
 
@@ -124,16 +120,12 @@ export function PlayerView({
       const newVisibleIndex = currentVisibleIndex - 1;
       const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
       if(newOriginalIndex !== -1) {
-        setCurrentSentenceIndex(newOriginalIndex);
+        playSentence(newOriginalIndex);
       }
     }
   };
 
   const handleNext = () => {
-    const audio = audioRef.current;
-    if(!audio) return;
-    audio.pause();
-
     const currentSub = subtitles[currentSentenceIndex];
     if (!currentSub) return;
     
@@ -142,7 +134,7 @@ export function PlayerView({
       const newVisibleIndex = currentVisibleIndex + 1;
       const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
       if(newOriginalIndex !== -1) {
-        setCurrentSentenceIndex(newOriginalIndex);
+        playSentence(newOriginalIndex);
       }
     }
   };
@@ -339,18 +331,18 @@ export function PlayerView({
       />
       <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
       
-      <div className="flex justify-center gap-2">
-        <Button onClick={handleDownloadSrt} variant="outline" size="sm">
-          <Download className="mr-2 h-4 w-4" />
-          Download .srt
+      <div className="flex justify-center items-center gap-2 sm:gap-4">
+        <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
+          <Rewind className="h-6 w-6" />
+          <span className="sr-only">Previous sentence</span>
         </Button>
-        <Button onClick={handleDownloadTxt} variant="outline" size="sm">
-          <FileText className="mr-2 h-4 w-4" />
-          Download .txt
+        <Button onClick={togglePlayPause} variant="default" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
+          {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
+          <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
         </Button>
-        <Button onClick={handleExportMd} variant="outline" size="sm">
-          <FileCode className="mr-2 h-4 w-4" />
-          Export .md
+        <Button onClick={handleNext} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
+          <FastForward className="h-6 w-6" />
+          <span className="sr-only">Next sentence</span>
         </Button>
       </div>
 
@@ -426,18 +418,18 @@ export function PlayerView({
         </div>
       </ScrollArea>
       
-      <div className="flex justify-center items-center gap-2 sm:gap-4">
-        <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
-          <Rewind className="h-6 w-6" />
-          <span className="sr-only">Previous sentence</span>
+      <div className="flex justify-center gap-2">
+        <Button onClick={handleDownloadSrt} variant="outline" size="sm">
+          <Download className="mr-2 h-4 w-4" />
+          Download .srt
         </Button>
-        <Button onClick={togglePlayPause} variant="default" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
-          {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm-w-8" />}
-          <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
+        <Button onClick={handleDownloadTxt} variant="outline" size="sm">
+          <FileText className="mr-2 h-4 w-4" />
+          Download .txt
         </Button>
-        <Button onClick={handleNext} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
-          <FastForward className="h-6 w-6" />
-          <span className="sr-only">Next sentence</span>
+        <Button onClick={handleExportMd} variant="outline" size="sm">
+          <FileCode className="mr-2 h-4 w-4" />
+          Export .md
         </Button>
       </div>
 
