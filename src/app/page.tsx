@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
-import { Rewind, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause, Star, Check, X, Download, FileCode } from 'lucide-react';
+import { Rewind, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause, Star, Check, X, Download, FileCode, Coffee } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { VolumeDisplay } from '@/components/ui/volume-display';
@@ -270,7 +270,9 @@ export default function LinguaPlayerPage() {
     if (currentVisibleIndex > 0) {
       const newVisibleIndex = currentVisibleIndex - 1;
       const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
-      playSentence(newOriginalIndex);
+      if(newOriginalIndex !== -1) {
+        setCurrentSentenceIndex(newOriginalIndex);
+      }
     }
   };
 
@@ -286,7 +288,9 @@ export default function LinguaPlayerPage() {
     if (currentVisibleIndex < visibleSubtitles.length - 1) {
       const newVisibleIndex = currentVisibleIndex + 1;
       const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
-      playSentence(newOriginalIndex);
+      if(newOriginalIndex !== -1) {
+        setCurrentSentenceIndex(newOriginalIndex);
+      }
     }
   };
 
@@ -334,11 +338,6 @@ export default function LinguaPlayerPage() {
       const newSubtitles = prevSubtitles.map(sub =>
         sub.id === id ? { ...sub, isStarred: !sub.isStarred } : sub
       );
-
-      const newIndex = newSubtitles.findIndex(sub => sub.id === id);
-      if (newIndex !== -1) {
-        setCurrentSentenceIndex(newIndex);
-      }
       
       const anyStarred = newSubtitles.some(sub => sub.isStarred);
       if (!anyStarred && showOnlyStarred) {
@@ -356,6 +355,9 @@ export default function LinguaPlayerPage() {
       if (firstStarredSub) {
         const firstStarredIndex = subtitles.findIndex(sub => sub.id === firstStarredSub.id);
         setCurrentSentenceIndex(firstStarredIndex);
+      } else {
+        // if no starred sentences, don't change index
+        setCurrentSentenceIndex(currentSentenceIndex);
       }
     } else {
       setCurrentSentenceIndex(lastUnfilteredIndexRef.current);
@@ -483,14 +485,14 @@ export default function LinguaPlayerPage() {
           if (currentVisibleIndex > 0) {
             const prevSub = visibleSubtitles[currentVisibleIndex - 1];
             const originalIndex = subtitles.findIndex(s => s.id === prevSub.id);
-            setCurrentSentenceIndex(originalIndex);
+            if(originalIndex !== -1) setCurrentSentenceIndex(originalIndex);
           }
           break;
         case 'ArrowDown':
            if (currentVisibleIndex < visibleSubtitles.length - 1) {
             const nextSub = visibleSubtitles[currentVisibleIndex + 1];
             const originalIndex = subtitles.findIndex(s => s.id === nextSub.id);
-            setCurrentSentenceIndex(originalIndex);
+            if(originalIndex !== -1) setCurrentSentenceIndex(originalIndex);
           }
           break;
         case 'Enter':
@@ -677,11 +679,22 @@ export default function LinguaPlayerPage() {
             </div>
           )}
         </CardContent>
-        { audioFile && srtFile && visibleSubtitles.length > 0 && currentSentenceIndex !== -1 && (
-          <CardFooter className="flex justify-center text-sm text-muted-foreground pt-4">
-             Sentence {subtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) + 1} of {subtitles.length}
-          </CardFooter>
-        )}
+        <CardFooter className="flex flex-col gap-4 items-center justify-center text-sm text-muted-foreground pt-4">
+            { audioFile && srtFile && visibleSubtitles.length > 0 && currentSentenceIndex !== -1 && (
+                <span>
+                    Sentence {subtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) + 1} of {subtitles.length}
+                </span>
+            )}
+            <a
+                href="https://buymeacoffee.com/stockcurves"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+                <Coffee className="w-4 h-4" />
+                <span>Buy me a coffee</span>
+            </a>
+        </CardFooter>
       </Card>
       <audio ref={audioRef} src={audioUrl ?? undefined} onEnded={() => {
         setIsPlaying(false)
