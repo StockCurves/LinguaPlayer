@@ -69,12 +69,17 @@ export default function LinguaPlayerPage() {
     try {
       setSrtContent(srtText);
       const timeToSeconds = (time: string): number => {
-        const parts = time.split(/[:,]/);
-        if (parts.length !== 4) throw new Error(`Invalid time format: ${time}`);
+        const timeString = time.replace(',', '.');
+        const parts = timeString.split(':');
+        if (parts.length !== 3) throw new Error(`Invalid time format: ${time}`);
+        
+        const secondsParts = parts[2].split('.');
+        if (secondsParts.length !== 2) throw new Error(`Invalid seconds format in time: ${time}`);
+
         const hours = parseInt(parts[0], 10);
         const minutes = parseInt(parts[1], 10);
-        const seconds = parseInt(parts[2], 10);
-        const milliseconds = parseInt(parts[3], 10);
+        const seconds = parseInt(secondsParts[0], 10);
+        const milliseconds = parseInt(secondsParts[1], 10);
         return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
       };
 
@@ -135,8 +140,8 @@ export default function LinguaPlayerPage() {
           if (!isNaN(id) && startTimeStr && endTimeStr && text) {
             return {
               id,
-              startTime: timeToSeconds(startTimeStr.replace(',', '.')),
-              endTime: timeToSeconds(endTimeStr.replace(',', '.')),
+              startTime: timeToSeconds(startTimeStr),
+              endTime: timeToSeconds(endTimeStr),
               text,
               isStarred: false,
             };
@@ -217,24 +222,28 @@ export default function LinguaPlayerPage() {
     const audio = audioRef.current;
     if (!audio) return;
   
-    const currentSub = subtitles[currentSentenceIndex];
-    if (!currentSub) {
+    const currentSubInFullList = subtitles[currentSentenceIndex];
+    if (!currentSubInFullList) {
         if (visibleSubtitles.length > 0) {
             const firstVisibleSubId = visibleSubtitles[0].id;
             const originalIndex = subtitles.findIndex(s => s.id === firstVisibleSubId);
-            playSentence(originalIndex);
+            if (originalIndex !== -1) playSentence(originalIndex);
         }
         return;
     }
 
+    const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === currentSubInFullList.id);
+    const currentSubInVisibleList = visibleSubtitles[currentVisibleIndex];
+    
+    if (!currentSubInVisibleList) return;
+
     if (audio.paused) {
-      if (audio.currentTime >= currentSub.endTime - 0.1) {
+      if (audio.currentTime >= currentSubInVisibleList.endTime - 0.1) {
         // If at the end of a sentence, find the next one in the visible list
-        const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === currentSub.id);
         if (currentVisibleIndex < visibleSubtitles.length - 1) {
           const nextVisibleSub = visibleSubtitles[currentVisibleIndex + 1];
           const nextOriginalIndex = subtitles.findIndex(s => s.id === nextVisibleSub.id);
-          playSentence(nextOriginalIndex);
+          if (nextOriginalIndex !== -1) playSentence(nextOriginalIndex);
         }
       } else {
         // Otherwise, resume or start playing the currently highlighted sentence
@@ -282,10 +291,12 @@ export default function LinguaPlayerPage() {
     const sub = visibleSubtitles[index];
     if (sub) {
         const originalIndex = subtitles.findIndex(s => s.id === sub.id);
-        if (originalIndex !== currentSentenceIndex) {
-            setCurrentSentenceIndex(originalIndex);
+        if (originalIndex !== -1) {
+          if (originalIndex !== currentSentenceIndex) {
+              setCurrentSentenceIndex(originalIndex);
+          }
+          playSentence(originalIndex);
         }
-        playSentence(originalIndex);
     }
   };
 
@@ -623,5 +634,3 @@ export default function LinguaPlayerPage() {
     </main>
   );
 }
-
-    
