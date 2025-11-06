@@ -1,8 +1,10 @@
 import type { NextConfig } from 'next';
 
+const isGithubActions = process.env.CI === 'true';
+
 const nextConfig: NextConfig = {
   output: 'export',
-  basePath: '/LinguaPlayer',
+  basePath: isGithubActions ? '/LinguaPlayer' : '',
   trailingSlash: true,
   /* config options here */
   typescript: {
