@@ -526,11 +526,6 @@ export default function LinguaPlayerPage() {
                 audioElement={audioRef.current}
                 audioFile={audioFile}
               />
-              <div className="text-center p-4 sm:p-6 bg-secondary/50 rounded-lg min-h-[10rem] flex items-center justify-center border">
-                <p className="text-xl sm:text-2xl font-medium text-foreground">
-                  {visibleSubtitles.length > 0 && currentSentenceIndex !== -1 ? visibleSubtitles.find(s => s.id === subtitles[currentSentenceIndex]?.id)?.text : "這裡要顯示 highlight 的句子"}
-                </p>
-              </div>
               <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
               <div className="flex justify-center items-center gap-2 sm:gap-4">
                 <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
