@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
-import { Rewind, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause, Star, Check, X } from 'lucide-react';
+import { Rewind, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause, Star, Check, X, Download, FileCode } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { VolumeDisplay } from '@/components/ui/volume-display';
@@ -359,6 +359,39 @@ export default function LinguaPlayerPage() {
     setShowOnlyStarred(checked);
   };
 
+  const downloadFile = (content: string, fileName: string, mimeType: string) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadSrt = () => {
+    if (!srtFile) return;
+    const fileName = srtFile.name.replace('.srt', '_edited.srt');
+    downloadFile(srtContent, fileName, 'text/plain');
+  };
+
+  const handleDownloadTxt = () => {
+    if (!srtFile) return;
+    const textContent = subtitles.map(sub => sub.text).join('\n');
+    const fileName = srtFile.name.replace('.srt', '.txt');
+    downloadFile(textContent, fileName, 'text/plain');
+  };
+  
+  const handleExportMd = () => {
+    toast({
+      title: "Coming Soon!",
+      description: "Markdown export functionality is not yet implemented.",
+    });
+  };
+
+
   useEffect(() => {
     if (currentSentenceIndex === -1) return;
     const audio = audioRef.current;
@@ -527,6 +560,21 @@ export default function LinguaPlayerPage() {
                 audioFile={audioFile}
               />
               <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
+              
+              <div className="flex justify-center gap-2">
+                <Button onClick={handleDownloadSrt} variant="outline" size="sm">
+                  <Download className="mr-2 h-4 w-4" />
+                  Download .srt
+                </Button>
+                <Button onClick={handleDownloadTxt} variant="outline" size="sm">
+                  <FileText className="mr-2 h-4 w-4" />
+                  Download .txt
+                </Button>
+                <Button onClick={handleExportMd} variant="outline" size="sm">
+                  <FileCode className="mr-2 h-4 w-4" />
+                  Export .md
+                </Button>
+              </div>
 
               {hasStarredSentences && (
                 <div className="flex items-center justify-center space-x-2">
@@ -573,7 +621,7 @@ export default function LinguaPlayerPage() {
                               autoFocus
                             />
                             <div className="flex justify-end gap-2">
-                              <Button onClick={() => handleSaveEdit(sub.id)} size="sm" variant="primary">
+                              <Button onClick={() => handleSaveEdit(sub.id)} size="sm" variant="default">
                                 <Check className="w-4 h-4 mr-1" /> Save
                               </Button>
                               <Button onClick={handleCancelEdit} size="sm" variant="ghost">
@@ -605,8 +653,8 @@ export default function LinguaPlayerPage() {
                   <Rewind className="h-6 w-6" />
                   <span className="sr-only">Previous sentence</span>
                 </Button>
-                <Button onClick={togglePlayPause} variant="primary" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
-                  {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
+                <Button onClick={togglePlayPause} variant="default" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
+                  {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm-w-8" />}
                   <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
                 </Button>
                 <Button onClick={handleNext} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
@@ -630,3 +678,5 @@ export default function LinguaPlayerPage() {
     </main>
   );
 }
+
+    
