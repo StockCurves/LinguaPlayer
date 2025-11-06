@@ -155,25 +155,36 @@ export default function LinguaPlayerPage() {
   
   const togglePlayPause = () => {
     const audio = audioRef.current;
-    if (audio) {
-      if (audio.paused && audioUrl && srtFile) {
-        const currentSub = subtitles[currentSentenceIndex];
-        const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === currentSub?.id);
-
-        if (currentSub && audio.currentTime >= currentSub.endTime - 0.1) {
-            // If at the end of a sentence, play the next one in the visible list
-            if (currentVisibleIndex < visibleSubtitles.length - 1) {
-                const nextVisibleSub = visibleSubtitles[currentVisibleIndex + 1];
-                const nextOriginalIndex = subtitles.findIndex(s => s.id === nextVisibleSub.id);
-                playSentence(nextOriginalIndex);
-            }
+    if (!audio) return;
+  
+    if (audio.paused && audioUrl && srtFile) {
+      const currentSub = subtitles[currentSentenceIndex];
+      const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === currentSub?.id);
+  
+      if (currentVisibleIndex === -1 && visibleSubtitles.length > 0) {
+        // If current sentence is not in the visible list (e.g., after filtering), play the first visible one.
+        const firstVisibleSub = visibleSubtitles[0];
+        const originalIndex = subtitles.findIndex(s => s.id === firstVisibleSub.id);
+        playSentence(originalIndex);
+        return;
+      }
+  
+      if (currentSub && audio.currentTime >= currentSub.endTime - 0.1) {
+        // If at the end of a sentence, play the next one in the visible list
+        if (currentVisibleIndex < visibleSubtitles.length - 1) {
+          const nextVisibleSub = visibleSubtitles[currentVisibleIndex + 1];
+          const nextOriginalIndex = subtitles.findIndex(s => s.id === nextVisibleSub.id);
+          playSentence(nextOriginalIndex);
         } else {
-            // Otherwise, play the currently highlighted sentence
-            playSentence(currentSentenceIndex);
+          // It was the last sentence, just pause.
+          audio.pause();
         }
       } else {
-        audio.pause();
+        // Otherwise, play the currently highlighted sentence
+        playSentence(currentSentenceIndex);
       }
+    } else {
+      audio.pause();
     }
   };
 
