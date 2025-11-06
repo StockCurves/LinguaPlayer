@@ -78,7 +78,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
   let startIdx = Math.max(0, currentSentenceIndex - Math.floor(sentencesInView / 2));
   let endIdx = Math.min(subtitles.length - 1, startIdx + sentencesInView - 1);
   
-  if (endIdx - startIdx + 1 < sentencesInView) {
+  if (endIdx - startIdx + 1 < sentencesInView && subtitles.length >= sentencesInView) {
       startIdx = Math.max(0, endIdx - sentencesInView + 1);
   }
 
@@ -159,7 +159,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
         const startPercent = ((currentSub.startTime - viewStartTime) / viewDuration) * 100;
         const endPercent = ((currentSub.endTime - viewStartTime) / viewDuration) * 100;
         return (
-          <div className="absolute top-0 bottom-0 bg-primary/20" style={{ left: `${startPercent}%`, width: `${endPercent - startPercent}%`}}>
+          <div className="absolute top-0 bottom-0 bg-primary/20" style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%`}}>
              <div
               className="absolute top-0 bottom-0 border-r-2 border-primary"
               style={{ left: `0%` }}
