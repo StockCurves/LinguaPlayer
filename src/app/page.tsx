@@ -144,15 +144,12 @@ export default function LinguaPlayerPage() {
 
   const playSentence = (index: number) => {
     const audio = audioRef.current;
-    if (!audio) return;
-
-    const sub = subtitles[index];
-    if (sub) {
-        setCurrentSentenceIndex(index);
-        audio.currentTime = sub.startTime;
-        if (audio.paused) {
-          audio.play().catch(e => console.error("Audio play failed:", e));
-        }
+    if (!audio || !subtitles[index]) return;
+    
+    setCurrentSentenceIndex(index);
+    audio.currentTime = subtitles[index].startTime;
+    if (audio.paused) {
+      audio.play().catch(e => console.error("Audio play failed:", e));
     }
   };
   
@@ -160,20 +157,19 @@ export default function LinguaPlayerPage() {
     const audio = audioRef.current;
     if (audio) {
       if (audio.paused && audioUrl && srtFile) {
-        const sub = subtitles[currentSentenceIndex];
-        if (sub) {
-          // If playback is at the end of a sentence, start the next one
-          if (audio.currentTime >= sub.endTime - 0.1) {
-            const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === sub.id);
+        const currentSub = subtitles[currentSentenceIndex];
+        const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === currentSub?.id);
+
+        if (currentSub && audio.currentTime >= currentSub.endTime - 0.1) {
+            // If at the end of a sentence, play the next one in the visible list
             if (currentVisibleIndex < visibleSubtitles.length - 1) {
-              const nextVisibleSub = visibleSubtitles[currentVisibleIndex + 1];
-              const nextOriginalIndex = subtitles.findIndex(s => s.id === nextVisibleSub.id);
-              playSentence(nextOriginalIndex);
+                const nextVisibleSub = visibleSubtitles[currentVisibleIndex + 1];
+                const nextOriginalIndex = subtitles.findIndex(s => s.id === nextVisibleSub.id);
+                playSentence(nextOriginalIndex);
             }
-          } else {
-            // If paused mid-sentence, just resume from the current highlighted sentence.
+        } else {
+            // Otherwise, play the currently highlighted sentence
             playSentence(currentSentenceIndex);
-          }
         }
       } else {
         audio.pause();
@@ -235,7 +231,7 @@ export default function LinguaPlayerPage() {
       }
       
       const anyStarred = newSubtitles.some(sub => sub.isStarred);
-      if (!anyStarred) {
+      if (!anyStarred && showOnlyStarred) {
         setShowOnlyStarred(false);
       }
 
@@ -316,7 +312,7 @@ export default function LinguaPlayerPage() {
       const currentSub = subtitles[currentSentenceIndex];
       if (!currentSub) return;
       
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.code)) {
           e.preventDefault();
       }
       
