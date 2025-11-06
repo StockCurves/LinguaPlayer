@@ -184,8 +184,13 @@ export default function LinguaPlayerPage() {
   };
 
   const handlePrevious = () => {
+    const audio = audioRef.current;
+    if(!audio) return;
+    audio.pause();
+
     const currentSub = subtitles[currentSentenceIndex];
     if (!currentSub) return;
+
     const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub.id);
     if (currentVisibleIndex > 0) {
       const newVisibleIndex = currentVisibleIndex - 1;
@@ -195,8 +200,13 @@ export default function LinguaPlayerPage() {
   };
 
   const handleNext = () => {
+    const audio = audioRef.current;
+    if(!audio) return;
+    audio.pause();
+
     const currentSub = subtitles[currentSentenceIndex];
     if (!currentSub) return;
+    
     const currentVisibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub.id);
     if (currentVisibleIndex < visibleSubtitles.length - 1) {
       const newVisibleIndex = currentVisibleIndex + 1;
@@ -425,7 +435,7 @@ export default function LinguaPlayerPage() {
               />
               <div className="text-center p-4 sm:p-6 bg-secondary/50 rounded-lg min-h-[10rem] flex items-center justify-center border">
                 <p className="text-xl sm:text-2xl font-medium text-foreground">
-                  {subtitles.length > 0 && currentSentenceIndex !== -1 ? subtitles[currentSentenceIndex]?.text : "Load your audio and srt file to begin."}
+                  {subtitles.length > 0 && currentSentenceIndex !== -1 ? subtitles[currentSentenceIndex]?.text : "這裡要顯示 highlight 的句子"}
                 </p>
               </div>
               <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
