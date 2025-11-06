@@ -29,6 +29,8 @@ jobs:
 
       - name: Build
         run: CI='true' npm run build
+        env:
+           CI: 'true'
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
