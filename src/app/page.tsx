@@ -162,24 +162,21 @@ export default function LinguaPlayerPage() {
     const audio = audioRef.current;
     if (audio) {
         if (audio.paused && audioUrl && srtFile) {
-        const sub = subtitles[currentSentenceIndex];
-        if (sub) {
-          // If playback is at the end of a sentence, start the next one
-          if (audio.currentTime >= sub.endTime - 0.1) {
-              handleNext();
-              // We need to wait for the state to update, so we play in the next render cycle.
-              setTimeout(() => {
-                  const nextSub = subtitles[currentSentenceIndex + 1];
-                  if(nextSub) {
-                    audio.currentTime = nextSub.startTime;
-                    audio.play().catch(e => console.error("Audio play failed:", e));
-                  }
-              }, 0);
-          } else {
-            // If paused mid-sentence, just resume.
-             playSentence(currentSentenceIndex);
+          const sub = subtitles[currentSentenceIndex];
+          if (sub) {
+            // If playback is at the end of a sentence, start the next one
+            if (audio.currentTime >= sub.endTime - 0.1) {
+              const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === sub.id);
+              if (currentVisibleIndex < visibleSubtitles.length - 1) {
+                const nextVisibleSub = visibleSubtitles[currentVisibleIndex + 1];
+                const nextOriginalIndex = subtitles.findIndex(s => s.id === nextVisibleSub.id);
+                playSentence(nextOriginalIndex);
+              }
+            } else {
+              // If paused mid-sentence, just resume.
+               playSentence(currentSentenceIndex);
+            }
           }
-        }
       } else {
         audio.pause();
       }
@@ -193,7 +190,7 @@ export default function LinguaPlayerPage() {
     if (currentVisibleIndex > 0) {
       const newVisibleIndex = currentVisibleIndex - 1;
       const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
-      setCurrentSentenceIndex(newOriginalIndex);
+      playSentence(newOriginalIndex);
     }
   };
 
@@ -204,7 +201,7 @@ export default function LinguaPlayerPage() {
     if (currentVisibleIndex < visibleSubtitles.length - 1) {
       const newVisibleIndex = currentVisibleIndex + 1;
       const newOriginalIndex = subtitles.findIndex(s => s.id === visibleSubtitles[newVisibleIndex].id);
-      setCurrentSentenceIndex(newOriginalIndex);
+      playSentence(newOriginalIndex);
     }
   };
 
@@ -362,7 +359,7 @@ export default function LinguaPlayerPage() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [audioFile, srtFile, currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles, handleNext, handlePrevious, togglePlayPause]);
+  }, [audioFile, srtFile, currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles]);
 
   const UploadBox = ({ type }: { type: 'audio' | 'srt' }) => {
     const file = type === 'audio' ? audioFile : srtFile;
