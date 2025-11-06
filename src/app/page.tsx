@@ -5,13 +5,14 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
-import { Rewind, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause, Star } from 'lucide-react';
+import { Rewind, FastForward, UploadCloud, FileAudio, FileText, CheckCircle2, Play, Pause, Star, Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { VolumeDisplay } from '@/components/ui/volume-display';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 
 
 type Subtitle = {
@@ -25,6 +26,7 @@ type Subtitle = {
 export default function LinguaPlayerPage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [srtFile, setSrtFile] = useState<File | null>(null);
+  const [srtContent, setSrtContent] = useState<string>("");
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [subtitles, setSubtitles] = useState<Subtitle[]>([]);
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(-1);
@@ -32,6 +34,8 @@ export default function LinguaPlayerPage() {
   const [sentenceProgress, setSentenceProgress] = useState(0);
   const [isDragging, setIsDragging] = useState<'audio' | 'srt' | null>(null);
   const [showOnlyStarred, setShowOnlyStarred] = useState(false);
+  const [editingSubtitleId, setEditingSubtitleId] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState('');
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const sentenceScrollRef = useRef<(HTMLDivElement | null)[]>([]);
@@ -42,8 +46,28 @@ export default function LinguaPlayerPage() {
   const hasStarredSentences = subtitles.some(sub => sub.isStarred);
   const visibleSubtitles = showOnlyStarred && hasStarredSentences ? subtitles.filter(sub => sub.isStarred) : subtitles;
 
+  const secondsToSrtTime = (seconds: number): string => {
+    const date = new Date(0);
+    date.setSeconds(seconds);
+    const time = date.toISOString().substr(11, 12);
+    return time.replace('.', ',');
+  };
+
+  const updateSrtContent = (updatedSubtitles: Subtitle[]) => {
+    // This regenerates the SRT string content from the subtitles array.
+    // It assumes the subtitles are ordered correctly.
+    let newSrtContent = '';
+    updatedSubtitles.forEach((sub, index) => {
+        newSrtContent += `${sub.id}\n`;
+        newSrtContent += `${secondsToSrtTime(sub.startTime)} --> ${secondsToSrtTime(sub.endTime)}\n`;
+        newSrtContent += `${sub.text}\n\n`;
+    });
+    setSrtContent(newSrtContent);
+  };
+
   const parseSrt = (srtText: string) => {
     try {
+      setSrtContent(srtText);
       const timeToSeconds = (time: string): number => {
         const parts = time.split(/[:,]/);
         if (parts.length !== 4) throw new Error(`Invalid time format: ${time}`);
@@ -58,26 +82,61 @@ export default function LinguaPlayerPage() {
         .replace(/\r/g, '')
         .split('\n\n')
         .filter(part => part.trim())
-        .map(part => {
+        .map((part, index) => {
           const lines = part.trim().split('\n');
           if (lines.length < 2) return null;
           
-          const timeLineIndex = lines.length > 2 && lines[1].includes('-->') ? 1 : lines.findIndex(l => l.includes('-->'));
+          let id = index + 1;
+          let timeLineIndex = -1;
+          let textStartIndex = -1;
+
+          // Find the timeline
+          for(let i = 0; i < lines.length; i++) {
+              if (lines[i].includes('-->')) {
+                  timeLineIndex = i;
+                  break;
+              }
+          }
           if (timeLineIndex === -1) return null;
+          
+          // Try to parse an ID if it exists before the timeline
+          if (timeLineIndex > 0 && !isNaN(parseInt(lines[timeLineIndex - 1], 10))) {
+             id = parseInt(lines[timeLineIndex - 1], 10);
+             textStartIndex = timeLineIndex + 1;
+          } else {
+             // If no numeric ID, the ID might be the first line, or we use index.
+             if (timeLineIndex === 0) return null; // No room for text
+             if(isNaN(parseInt(lines[0], 10))) {
+                textStartIndex = timeLineIndex + 1;
+             } else {
+                id = parseInt(lines[0], 10);
+                textStartIndex = timeLineIndex + 1;
+             }
+          }
+           if (textStartIndex === -1) {
+            textStartIndex = 1;
+            if (lines[0].match(/^\d+$/)) {
+              textStartIndex = 1;
+            } else {
+              textStartIndex = 0;
+            }
+            if (lines[textStartIndex].includes('-->')) {
+                textStartIndex++;
+            }
+          }
 
 
-          const id = lines.length > 2 && !isNaN(parseInt(lines[0], 10)) ? parseInt(lines[0], 10) : (Math.random() * 1000);
-          const timeMatch = lines[timeLineIndex].match(/(\d{2}:\d{2}:\d{2},\d{3})\s-->\s(\d{2}:\d{2}:\d{2},\d{3})/);
+          const timeMatch = lines[timeLineIndex].match(/(\d{1,2}:\d{2}:\d{2}[,.]\d{3})\s-->\s(\d{1,2}:\d{2}:\d{2}[,.]\d{3})/);
           if (!timeMatch) return null;
 
           const [, startTimeStr, endTimeStr] = timeMatch;
-          const text = lines.slice(timeLineIndex + 1).join(' ').trim();
+          const text = lines.slice(textStartIndex).join(' ').trim();
           
           if (!isNaN(id) && startTimeStr && endTimeStr && text) {
             return {
               id,
-              startTime: timeToSeconds(startTimeStr),
-              endTime: timeToSeconds(endTimeStr),
+              startTime: timeToSeconds(startTimeStr.replace(',', '.')),
+              endTime: timeToSeconds(endTimeStr.replace(',', '.')),
               text,
               isStarred: false,
             };
@@ -101,6 +160,7 @@ export default function LinguaPlayerPage() {
         description: error instanceof Error ? error.message : "Could not parse the SRT file. Please ensure it's correctly formatted.",
       });
       setSrtFile(null);
+      setSrtContent("");
     }
   };
 
@@ -144,7 +204,7 @@ export default function LinguaPlayerPage() {
 
   const playSentence = (index: number) => {
     const audio = audioRef.current;
-    if (!audio || !subtitles[index]) return;
+    if (!audio || index < 0 || index >= subtitles.length) return;
     
     setCurrentSentenceIndex(index);
     audio.currentTime = subtitles[index].startTime;
@@ -157,30 +217,27 @@ export default function LinguaPlayerPage() {
     const audio = audioRef.current;
     if (!audio) return;
   
-    if (audio.paused && audioUrl && srtFile) {
-      const currentSub = subtitles[currentSentenceIndex];
-      const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === currentSub?.id);
-  
-      if (currentVisibleIndex === -1 && visibleSubtitles.length > 0) {
-        // If current sentence is not in the visible list (e.g., after filtering), play the first visible one.
-        const firstVisibleSub = visibleSubtitles[0];
-        const originalIndex = subtitles.findIndex(s => s.id === firstVisibleSub.id);
-        playSentence(originalIndex);
+    const currentSub = subtitles[currentSentenceIndex];
+    if (!currentSub) {
+        if (visibleSubtitles.length > 0) {
+            const firstVisibleSubId = visibleSubtitles[0].id;
+            const originalIndex = subtitles.findIndex(s => s.id === firstVisibleSubId);
+            playSentence(originalIndex);
+        }
         return;
-      }
-  
-      if (currentSub && audio.currentTime >= currentSub.endTime - 0.1) {
-        // If at the end of a sentence, play the next one in the visible list
+    }
+
+    if (audio.paused) {
+      if (audio.currentTime >= currentSub.endTime - 0.1) {
+        // If at the end of a sentence, find the next one in the visible list
+        const currentVisibleIndex = visibleSubtitles.findIndex(s => s.id === currentSub.id);
         if (currentVisibleIndex < visibleSubtitles.length - 1) {
           const nextVisibleSub = visibleSubtitles[currentVisibleIndex + 1];
           const nextOriginalIndex = subtitles.findIndex(s => s.id === nextVisibleSub.id);
           playSentence(nextOriginalIndex);
-        } else {
-          // It was the last sentence, just pause.
-          audio.pause();
         }
       } else {
-        // Otherwise, play the currently highlighted sentence
+        // Otherwise, resume or start playing the currently highlighted sentence
         playSentence(currentSentenceIndex);
       }
     } else {
@@ -225,8 +282,35 @@ export default function LinguaPlayerPage() {
     const sub = visibleSubtitles[index];
     if (sub) {
         const originalIndex = subtitles.findIndex(s => s.id === sub.id);
+        if (originalIndex !== currentSentenceIndex) {
+            setCurrentSentenceIndex(originalIndex);
+        }
         playSentence(originalIndex);
     }
+  };
+
+  const handleSentenceDoubleClick = (sub: Subtitle) => {
+    setEditingSubtitleId(sub.id);
+    setEditingText(sub.text);
+  };
+
+  const handleSaveEdit = (id: number) => {
+    const newSubtitles = subtitles.map(sub => 
+      sub.id === id ? { ...sub, text: editingText } : sub
+    );
+    setSubtitles(newSubtitles);
+    updateSrtContent(newSubtitles);
+    setEditingSubtitleId(null);
+    setEditingText('');
+    toast({
+      title: "Sentence Saved",
+      description: "The subtitle has been updated.",
+    });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingSubtitleId(null);
+    setEditingText('');
   };
 
   const handleStarClick = (e: React.MouseEvent, id: number) => {
@@ -302,18 +386,19 @@ export default function LinguaPlayerPage() {
       const currentSub = subtitles[currentSentenceIndex];
       const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub?.id);
       
-      if (visibleIndex !== -1) {
+      if (visibleIndex !== -1 && !editingSubtitleId) {
         sentenceScrollRef.current[visibleIndex]?.scrollIntoView({
           behavior: 'smooth',
           block: 'center'
         });
       }
     }
-  }, [currentSentenceIndex, audioFile, srtFile, subtitles, showOnlyStarred, visibleSubtitles]);
+  }, [currentSentenceIndex, audioFile, srtFile, subtitles, showOnlyStarred, visibleSubtitles, editingSubtitleId]);
 
 
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (editingSubtitleId) return;
       if (!audioFile || !srtFile || currentSentenceIndex === -1) return;
 
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -366,7 +451,7 @@ export default function LinguaPlayerPage() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [audioFile, srtFile, currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles]);
+  }, [audioFile, srtFile, currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles, editingSubtitleId]);
 
   const UploadBox = ({ type }: { type: 'audio' | 'srt' }) => {
     const file = type === 'audio' ? audioFile : srtFile;
@@ -432,7 +517,7 @@ export default function LinguaPlayerPage() {
               />
               <div className="text-center p-4 sm:p-6 bg-secondary/50 rounded-lg min-h-[10rem] flex items-center justify-center border">
                 <p className="text-xl sm:text-2xl font-medium text-foreground">
-                  {subtitles.length > 0 && currentSentenceIndex !== -1 ? subtitles[currentSentenceIndex]?.text : "這裡要顯示 highlight 的句子"}
+                  {visibleSubtitles.length > 0 && currentSentenceIndex !== -1 ? visibleSubtitles.find(s => s.id === subtitles[currentSentenceIndex]?.id)?.text : "這裡要顯示 highlight 的句子"}
                 </p>
               </div>
               <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
@@ -466,33 +551,57 @@ export default function LinguaPlayerPage() {
                 <div className="flex flex-col gap-2">
                   {visibleSubtitles.map((sub, index) => {
                     const originalIndex = subtitles.findIndex(s => s.id === sub.id);
+                    const isEditing = editingSubtitleId === sub.id;
+
                     return (
                       <div
                         key={sub.id}
                         ref={el => sentenceScrollRef.current[index] = el}
-                        onClick={() => handleSentenceClick(index)}
+                        onClick={() => !isEditing && handleSentenceClick(index)}
+                        onDoubleClick={() => handleSentenceDoubleClick(sub)}
                         className={cn(
                           "cursor-pointer rounded-md p-2 transition-colors flex items-start gap-3",
-                          sub.id === subtitles[currentSentenceIndex]?.id
+                          !isEditing && (sub.id === subtitles[currentSentenceIndex]?.id
                             ? 'bg-accent/20'
-                            : 'hover:bg-accent/10'
+                            : 'hover:bg-accent/10')
                         )}
                       >
                         <button onClick={(e) => handleStarClick(e, sub.id)} className="p-1 -ml-1 text-muted-foreground hover:text-amber-500 transition-colors">
                           <Star className={cn("w-4 h-4", sub.isStarred ? 'text-amber-400 fill-amber-400' : 'text-muted-foreground')}/>
                           <span className="sr-only">Star sentence</span>
                         </button>
-                        <p
-                          className={cn(
-                            "flex-1",
-                            sub.id === subtitles[currentSentenceIndex]?.id
-                              ? 'font-bold text-foreground'
-                              : 'text-muted-foreground'
-                          )}
-                        >
-                          <span className={cn("mr-2", sub.id === subtitles[currentSentenceIndex]?.id ? 'text-primary' : '')}>{originalIndex + 1}.</span>
-                          <span>{sub.text}</span>
-                        </p>
+                        
+                        {isEditing ? (
+                          <div className="flex-1 flex flex-col gap-2">
+                            <Textarea
+                              value={editingText}
+                              onChange={(e) => setEditingText(e.target.value)}
+                              className="w-full"
+                              rows={2}
+                              autoFocus
+                            />
+                            <div className="flex justify-end gap-2">
+                              <Button onClick={() => handleSaveEdit(sub.id)} size="sm" variant="primary">
+                                <Check className="w-4 h-4 mr-1" /> Save
+                              </Button>
+                              <Button onClick={handleCancelEdit} size="sm" variant="ghost">
+                                <X className="w-4 h-4 mr-1" /> Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p
+                            className={cn(
+                              "flex-1",
+                              sub.id === subtitles[currentSentenceIndex]?.id
+                                ? 'font-bold text-foreground'
+                                : 'text-muted-foreground'
+                            )}
+                          >
+                            <span className={cn("mr-2", sub.id === subtitles[currentSentenceIndex]?.id ? 'text-primary' : '')}>{originalIndex + 1}.</span>
+                            <span>{sub.text}</span>
+                          </p>
+                        )}
                       </div>
                     )
                   })}
@@ -514,3 +623,5 @@ export default function LinguaPlayerPage() {
     </main>
   );
 }
+
+    
