@@ -246,7 +246,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
                 className={cn("absolute top-0 bottom-0 w-1.5 cursor-ew-resize", isTimingEditing ? "bg-red-500" : "bg-primary")}
                 style={{ left: 0 }}
             >
-              <div className={cn("absolute top-1/2 -translate-y-1/2 -left-1 w-3 h-6 rounded-sm", isTimingEditing ? "bg-red-500" : "bg-primary")}/>
+              <div className={cn("absolute top-1/2 -translate-y-1/2 -left-0.5 w-1 h-4 rounded-sm", isTimingEditing ? "bg-red-500" : "bg-primary")}/>
             </div>
             {/* End Handle */}
             <div
@@ -254,7 +254,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
                 className={cn("absolute top-0 bottom-0 w-1.5 cursor-ew-resize", isTimingEditing ? "bg-red-500" : "bg-primary")}
                 style={{ right: 0 }}
             >
-               <div className={cn("absolute top-1/2 -translate-y-1/2 -right-1 w-3 h-6 rounded-sm", isTimingEditing ? "bg-red-500" : "bg-primary")}/>
+               <div className={cn("absolute top-1/2 -translate-y-1/2 -right-0.5 w-1 h-4 rounded-sm", isTimingEditing ? "bg-red-500" : "bg-primary")}/>
             </div>
         </div>
 
