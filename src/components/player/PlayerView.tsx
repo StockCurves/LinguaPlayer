@@ -45,6 +45,7 @@ export function PlayerView({
   const [showOnlyStarred, setShowOnlyStarred] = useState(false);
   const [editingSubtitleId, setEditingSubtitleId] = useState<number | null>(null);
   const [editingText, setEditingText] = useState('');
+  const [isTimingEditing, setIsTimingEditing] = useState(false);
 
   const sentenceScrollRef = useRef<(HTMLDivElement | null)[]>([]);
   const lastUnfilteredIndexRef = useRef(0);
@@ -63,6 +64,8 @@ export function PlayerView({
   const generateSrtContent = (subs: Subtitle[]) => {
     let content = '';
     subs.forEach((sub, index) => {
+        // Use original subtitle ID for numbering if it makes sense, or just index.
+        // For simplicity and consistency, we'll use array index + 1 for numbering in the file.
         content += `${index + 1}\n`;
         content += `${secondsToSrtTime(sub.startTime)} --> ${secondsToSrtTime(sub.endTime)}\n`;
         content += `${sub.text}\n\n`;
@@ -73,6 +76,22 @@ export function PlayerView({
   const updateSrtContent = (updatedSubtitles: Subtitle[]) => {
     const newSrtContent = generateSrtContent(updatedSubtitles);
     setSrtContent(newSrtContent);
+  };
+
+  const handleTimingSave = (newStartTime: number, newEndTime: number) => {
+    const currentSub = subtitles[currentSentenceIndex];
+    if (!currentSub) return;
+
+    const newSubtitles = subtitles.map((sub) =>
+      sub.id === currentSub.id ? { ...sub, startTime: newStartTime, endTime: newEndTime } : sub
+    );
+    setSubtitles(newSubtitles);
+    updateSrtContent(newSubtitles);
+    setIsTimingEditing(false);
+    toast({
+        title: "Timestamps Saved",
+        description: "The sentence timing has been updated.",
+    });
   };
   
   const togglePlayPause = () => {
@@ -266,7 +285,7 @@ export function PlayerView({
 
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
-      if (editingSubtitleId) return;
+      if (editingSubtitleId || isTimingEditing) return;
       if (currentSentenceIndex === -1) return;
 
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -319,120 +338,127 @@ export function PlayerView({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles, editingSubtitleId]);
+  }, [currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles, editingSubtitleId, isTimingEditing]);
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-500">
-      <VolumeDisplay 
-        subtitles={subtitles} 
-        currentSentenceIndex={currentSentenceIndex} 
+      <VolumeDisplay
+        subtitles={subtitles}
+        currentSentenceIndex={currentSentenceIndex}
         audioElement={audioRef.current}
         audioFile={audioFile}
+        isTimingEditing={isTimingEditing}
+        setIsTimingEditing={setIsTimingEditing}
+        onSave={handleTimingSave}
       />
-      <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
       
-      {hasStarredSentences && (
-        <div className="flex items-center justify-center space-x-2">
-          <Switch
-            id="show-starred"
-            checked={showOnlyStarred}
-            onCheckedChange={handleShowStarredToggle}
-          />
-          <Label htmlFor="show-starred">Show Starred Only</Label>
-        </div>
-      )}
+      {!isTimingEditing && (
+        <>
+          <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
 
-      <ScrollArea className="h-48 w-full rounded-md border p-4">
-        <div className="flex flex-col gap-2">
-          {visibleSubtitles.map((sub, index) => {
-            const originalIndex = subtitles.findIndex(s => s.id === sub.id);
-            const isEditing = editingSubtitleId === sub.id;
+          {hasStarredSentences && (
+            <div className="flex items-center justify-center space-x-2">
+              <Switch
+                id="show-starred"
+                checked={showOnlyStarred}
+                onCheckedChange={handleShowStarredToggle}
+              />
+              <Label htmlFor="show-starred">Show Starred Only</Label>
+            </div>
+          )}
 
-            return (
-              <div
-                key={sub.id}
-                ref={el => sentenceScrollRef.current[index] = el}
-                onClick={() => !isEditing && handleSentenceClick(index)}
-                onDoubleClick={() => handleSentenceDoubleClick(sub)}
-                className={cn(
-                  "cursor-pointer rounded-md p-2 transition-colors flex items-start gap-3",
-                  !isEditing && (sub.id === subtitles[currentSentenceIndex]?.id
-                    ? 'bg-accent/20'
-                    : 'hover:bg-accent/10')
-                )}
-              >
-                <button onClick={(e) => handleStarClick(e, sub.id)} className="p-1 -ml-1 text-muted-foreground hover:text-amber-500 transition-colors">
-                  <Star className={cn("w-4 h-4", sub.isStarred ? 'text-amber-400 fill-amber-400' : 'text-muted-foreground')}/>
-                  <span className="sr-only">Star sentence</span>
-                </button>
-                
-                {isEditing ? (
-                  <div className="flex-1 flex flex-col gap-2">
-                    <Textarea
-                      value={editingText}
-                      onChange={(e) => setEditingText(e.target.value)}
-                      className="w-full"
-                      rows={2}
-                      autoFocus
-                    />
-                    <div className="flex justify-end gap-2">
-                      <Button onClick={() => handleSaveEdit(sub.id)} size="sm" variant="default">
-                        <Check className="w-4 h-4 mr-1" /> Save
-                      </Button>
-                      <Button onClick={handleCancelEdit} size="sm" variant="ghost">
-                        <X className="w-4 h-4 mr-1" /> Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <p
+          <div className="flex justify-center items-center gap-2 sm:gap-4">
+              <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
+                <Rewind className="h-6 w-6" />
+                <span className="sr-only">Previous sentence</span>
+              </Button>
+              <Button onClick={togglePlayPause} variant="default" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
+                {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
+                <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
+              </Button>
+              <Button onClick={handleNext} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
+                <FastForward className="h-6 w-6" />
+                <span className="sr-only">Next sentence</span>
+              </Button>
+          </div>
+
+          <ScrollArea className="h-48 w-full rounded-md border p-4">
+            <div className="flex flex-col gap-2">
+              {visibleSubtitles.map((sub, index) => {
+                const originalIndex = subtitles.findIndex(s => s.id === sub.id);
+                const isEditing = editingSubtitleId === sub.id;
+
+                return (
+                  <div
+                    key={sub.id}
+                    ref={el => sentenceScrollRef.current[index] = el}
+                    onClick={() => !isEditing && handleSentenceClick(index)}
+                    onDoubleClick={() => handleSentenceDoubleClick(sub)}
                     className={cn(
-                      "flex-1",
-                      sub.id === subtitles[currentSentenceIndex]?.id
-                        ? 'font-bold text-foreground'
-                        : 'text-muted-foreground'
+                      "cursor-pointer rounded-md p-2 transition-colors flex items-start gap-3",
+                      !isEditing && (sub.id === subtitles[currentSentenceIndex]?.id
+                        ? 'bg-accent/20'
+                        : 'hover:bg-accent/10')
                     )}
                   >
-                    <span className={cn("mr-2", sub.id === subtitles[currentSentenceIndex]?.id ? 'text-primary' : '')}>{originalIndex + 1}.</span>
-                    <span>{sub.text}</span>
-                  </p>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </ScrollArea>
-            
-      <div className="flex justify-center items-center gap-2 sm:gap-4">
-        <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
-          <Rewind className="h-6 w-6" />
-          <span className="sr-only">Previous sentence</span>
-        </Button>
-        <Button onClick={togglePlayPause} variant="default" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
-          {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
-          <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
-        </Button>
-        <Button onClick={handleNext} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
-          <FastForward className="h-6 w-6" />
-          <span className="sr-only">Next sentence</span>
-        </Button>
-      </div>
-
-      <div className="flex justify-center gap-2">
-        <Button onClick={handleDownloadSrt} variant="outline" size="sm">
-          <Download className="mr-2 h-4 w-4" />
-          Download .srt
-        </Button>
-        <Button onClick={handleDownloadTxt} variant="outline" size="sm">
-          <FileText className="mr-2 h-4 w-4" />
-          Download .txt
-        </Button>
-        <Button onClick={handleExportMd} variant="outline" size="sm">
-          <FileCode className="mr-2 h-4 w-4" />
-          Export .md
-        </Button>
-      </div>
-
+                    <button onClick={(e) => handleStarClick(e, sub.id)} className="p-1 -ml-1 text-muted-foreground hover:text-amber-500 transition-colors">
+                      <Star className={cn("w-4 h-4", sub.isStarred ? 'text-amber-400 fill-amber-400' : 'text-muted-foreground')}/>
+                      <span className="sr-only">Star sentence</span>
+                    </button>
+                    
+                    {isEditing ? (
+                      <div className="flex-1 flex flex-col gap-2">
+                        <Textarea
+                          value={editingText}
+                          onChange={(e) => setEditingText(e.target.value)}
+                          className="w-full"
+                          rows={2}
+                          autoFocus
+                        />
+                        <div className="flex justify-end gap-2">
+                          <Button onClick={() => handleSaveEdit(sub.id)} size="sm" variant="default">
+                            <Check className="w-4 h-4 mr-1" /> Save
+                          </Button>
+                          <Button onClick={handleCancelEdit} size="sm" variant="ghost">
+                            <X className="w-4 h-4 mr-1" /> Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p
+                        className={cn(
+                          "flex-1",
+                          sub.id === subtitles[currentSentenceIndex]?.id
+                            ? 'font-bold text-foreground'
+                            : 'text-muted-foreground'
+                        )}
+                      >
+                        <span className={cn("mr-2", sub.id === subtitles[currentSentenceIndex]?.id ? 'text-primary' : '')}>{originalIndex + 1}.</span>
+                        <span>{sub.text}</span>
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </ScrollArea>
+                
+          <div className="flex justify-center gap-2">
+            <Button onClick={handleDownloadSrt} variant="outline" size="sm">
+              <Download className="mr-2 h-4 w-4" />
+              Download .srt
+            </Button>
+            <Button onClick={handleDownloadTxt} variant="outline" size="sm">
+              <FileText className="mr-2 h-4 w-4" />
+              Download .txt
+            </Button>
+            <Button onClick={handleExportMd} variant="outline" size="sm">
+              <FileCode className="mr-2 h-4 w-4" />
+              Export .md
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
