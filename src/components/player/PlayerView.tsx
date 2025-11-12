@@ -64,9 +64,7 @@ export function PlayerView({
   const generateSrtContent = (subs: Subtitle[]) => {
     let content = '';
     subs.forEach((sub, index) => {
-        // Use original subtitle ID for numbering if it makes sense, or just index.
-        // For simplicity and consistency, we'll use array index + 1 for numbering in the file.
-        content += `${index + 1}\n`;
+        content += `${sub.id}\n`;
         content += `${secondsToSrtTime(sub.startTime)} --> ${secondsToSrtTime(sub.endTime)}\n`;
         content += `${sub.text}\n\n`;
     });
@@ -109,11 +107,9 @@ export function PlayerView({
     }
 
     if (audio.paused) {
-      // If playback is at the end of the sentence or very close, replay it.
       if (audio.currentTime >= currentSubInFullList.endTime - 0.1 || audio.currentTime < currentSubInFullList.startTime) {
         playSentence(currentSentenceIndex);
       } else {
-        // Otherwise, just resume playback.
         audio.play().catch(e => console.error("Audio play failed:", e));
       }
     } else {
@@ -146,18 +142,17 @@ export function PlayerView({
       if(newOriginalIndex !== -1) {
         playSentence(newOriginalIndex);
       }
+    } else if (isPlaying) {
+      const audio = audioRef.current;
+      if (audio) audio.pause();
     }
   };
 
   const handleSentenceClick = (index: number) => {
-    // index is from visibleSubtitles
     const sub = visibleSubtitles[index];
     if (sub) {
         const originalIndex = subtitles.findIndex(s => s.id === sub.id);
         if (originalIndex !== -1) {
-          if (originalIndex !== currentSentenceIndex) {
-              setCurrentSentenceIndex(originalIndex);
-          }
           playSentence(originalIndex);
         }
     }
@@ -189,10 +184,18 @@ export function PlayerView({
 
   const handleStarClick = (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
+    let newSubtitles: Subtitle[] = [];
+    let starredIndex = -1;
+
     setSubtitles(prevSubtitles => {
-      const newSubtitles = prevSubtitles.map(sub =>
+      newSubtitles = prevSubtitles.map(sub =>
         sub.id === id ? { ...sub, isStarred: !sub.isStarred } : sub
       );
+
+      starredIndex = newSubtitles.findIndex(sub => sub.id === id);
+      if (starredIndex !== -1) {
+          setCurrentSentenceIndex(starredIndex);
+      }
       
       const anyStarred = newSubtitles.some(sub => sub.isStarred);
       if (!anyStarred && showOnlyStarred) {
@@ -205,20 +208,28 @@ export function PlayerView({
 
   const handleShowStarredToggle = (checked: boolean) => {
     if (checked) {
-      lastUnfilteredIndexRef.current = currentSentenceIndex;
-      const firstStarredSub = subtitles.find(sub => sub.isStarred);
-      if (firstStarredSub) {
-        const firstStarredIndex = subtitles.findIndex(sub => sub.id === firstStarredSub.id);
-        setCurrentSentenceIndex(firstStarredIndex);
-      } else {
-        // if no starred sentences, don't change index
-        setCurrentSentenceIndex(currentSentenceIndex);
-      }
+        lastUnfilteredIndexRef.current = currentSentenceIndex;
+        const starredSubtitles = subtitles.filter(sub => sub.isStarred);
+        if (starredSubtitles.length > 0) {
+            let closestIndex = 0;
+            let minDistance = Infinity;
+
+            for (let i = 0; i < starredSubtitles.length; i++) {
+                const originalIndexOfStarred = subtitles.findIndex(s => s.id === starredSubtitles[i].id);
+                const distance = Math.abs(originalIndexOfStarred - currentSentenceIndex);
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    closestIndex = originalIndexOfStarred;
+                }
+            }
+            setCurrentSentenceIndex(closestIndex);
+        }
     } else {
-      setCurrentSentenceIndex(lastUnfilteredIndexRef.current);
+        setCurrentSentenceIndex(lastUnfilteredIndexRef.current);
     }
     setShowOnlyStarred(checked);
-  };
+};
+
 
   const downloadFile = (content: string, fileName: string, mimeType: string) => {
     const blob = new Blob([content], { type: mimeType });
@@ -329,7 +340,7 @@ export function PlayerView({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles, editingSubtitleId, isTimingEditing]);
+  }, [currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles, editingSubtitleId, isTimingEditing, isPlaying]);
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-500">
@@ -346,6 +357,21 @@ export function PlayerView({
       {!isTimingEditing && (
         <>
           <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
+          
+           <div className="flex justify-center items-center gap-2 sm:gap-4">
+              <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
+                <Rewind className="h-6 w-6" />
+                <span className="sr-only">Previous sentence</span>
+              </Button>
+              <Button onClick={togglePlayPause} variant="default" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
+                {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
+                <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
+              </Button>
+              <Button onClick={handleNext} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
+                <FastForward className="h-6 w-6" />
+                <span className="sr-only">Next sentence</span>
+              </Button>
+          </div>
 
           <ScrollArea className="h-80 w-full rounded-md border p-4">
             <div className="flex flex-col gap-2">
@@ -357,11 +383,11 @@ export function PlayerView({
                   <div
                     key={sub.id}
                     ref={el => sentenceScrollRef.current[index] = el}
-                    onClick={() => !isEditing && handleSentenceClick(index)}
+                    onClick={() => !isEditing && playSentence(originalIndex)}
                     onDoubleClick={() => handleSentenceDoubleClick(sub)}
                     className={cn(
                       "cursor-pointer rounded-md p-2 transition-colors flex items-start gap-3",
-                      !isEditing && (sub.id === subtitles[currentSentenceIndex]?.id
+                      !isEditing && (originalIndex === currentSentenceIndex
                         ? 'bg-accent/20'
                         : 'hover:bg-accent/10')
                     )}
@@ -393,12 +419,12 @@ export function PlayerView({
                       <p
                         className={cn(
                           "flex-1",
-                          sub.id === subtitles[currentSentenceIndex]?.id
+                          originalIndex === currentSentenceIndex
                             ? 'font-bold text-foreground'
                             : 'text-muted-foreground'
                         )}
                       >
-                        <span className={cn("mr-2", sub.id === subtitles[currentSentenceIndex]?.id ? 'text-primary' : '')}>{originalIndex + 1}.</span>
+                        <span className={cn("mr-2", originalIndex === currentSentenceIndex ? 'text-primary' : '')}>{originalIndex + 1}.</span>
                         <span>{sub.text}</span>
                       </p>
                     )}
@@ -407,21 +433,6 @@ export function PlayerView({
               })}
             </div>
           </ScrollArea>
-          
-          <div className="flex justify-center items-center gap-2 sm:gap-4">
-              <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
-                <Rewind className="h-6 w-6" />
-                <span className="sr-only">Previous sentence</span>
-              </Button>
-              <Button onClick={togglePlayPause} variant="default" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
-                {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
-                <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
-              </Button>
-              <Button onClick={handleNext} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
-                <FastForward className="h-6 w-6" />
-                <span className="sr-only">Next sentence</span>
-              </Button>
-          </div>
                 
           {hasStarredSentences && (
             <div className="flex items-center justify-center space-x-2">
