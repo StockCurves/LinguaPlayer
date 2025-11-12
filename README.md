@@ -5,6 +5,14 @@ Lingua Player is a web-based application meticulously designed for language lear
 
 ---
 
+### ❤️ Support the Project
+
+If you find Lingua Player useful, please consider supporting its development. Your contribution helps keep the project alive and growing!
+
+<a href="https://buymeacoffee.com/stockcurves" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: 41px !important;width: 174px !important;box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;-webkit-box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;" ></a>
+
+---
+
 ### **English** 🇬🇧
 
 Lingua Player is a web application designed for language learners. It allows users to upload an audio file (.mp3) and its corresponding subtitle file (.srt) to facilitate sentence-by-sentence playback. This feature helps users to focus on individual sentences, improving their listening comprehension and pronunciation.
@@ -128,3 +136,10 @@ Lingua Player هو تطبيق ويب مصمم لمتعلمي اللغات. يس�
 - **تصفية حسب المميزة بنجمة**: قم بتبديل المفتاح لعرض الجمل المميزة بنجمة فقط.
 - **تنزيل عملك**: قم بتصدير ترجماتك المعدلة كملف `.srt` أو `.txt`. يحترم التنزيل مرشح "المميزة بنجمة".
 - **تحكم كامل بلوحة المفاتيح**: تحكم في كل جانب من جوانب المشغل باستخدام اختصارات لوحة المفاتيح البديهية.
+
+---
+<p align="center">
+  <a href="https://buymeacoffee.com/stockcurves" target="_blank">
+    <img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: 41px !important;width: 174px !important;box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;-webkit-box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;" >
+  </a>
+</p>
