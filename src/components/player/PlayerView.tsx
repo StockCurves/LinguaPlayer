@@ -110,7 +110,7 @@ export function PlayerView({
 
     if (audio.paused) {
       // If playback is at the end of the sentence or very close, replay it.
-      if (audio.currentTime >= currentSubInFullList.endTime - 0.1) {
+      if (audio.currentTime >= currentSubInFullList.endTime - 0.1 || audio.currentTime < currentSubInFullList.startTime) {
         playSentence(currentSentenceIndex);
       } else {
         // Otherwise, just resume playback.
@@ -347,7 +347,22 @@ export function PlayerView({
         <>
           <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
 
-          <ScrollArea className="h-48 w-full rounded-md border p-4">
+          <div className="flex justify-center items-center gap-2 sm:gap-4">
+              <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
+                <Rewind className="h-6 w-6" />
+                <span className="sr-only">Previous sentence</span>
+              </Button>
+              <Button onClick={togglePlayPause} variant="default" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
+                {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
+                <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
+              </Button>
+              <Button onClick={handleNext} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
+                <FastForward className="h-6 w-6" />
+                <span className="sr-only">Next sentence</span>
+              </Button>
+          </div>
+
+          <ScrollArea className="h-80 w-full rounded-md border p-4">
             <div className="flex flex-col gap-2">
               {visibleSubtitles.map((sub, index) => {
                 const originalIndex = subtitles.findIndex(s => s.id === sub.id);
@@ -407,21 +422,6 @@ export function PlayerView({
               })}
             </div>
           </ScrollArea>
-          
-          <div className="flex justify-center items-center gap-2 sm:gap-4">
-              <Button onClick={handlePrevious} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
-                <Rewind className="h-6 w-6" />
-                <span className="sr-only">Previous sentence</span>
-              </Button>
-              <Button onClick={togglePlayPause} variant="default" size="lg" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full shadow-lg hover:scale-105 transition-transform" disabled={currentSentenceIndex === -1}>
-                {isPlaying ? <Pause className="h-7 w-7 sm:h-8 sm:w-8" /> : <Play className="h-7 w-7 sm:h-8 sm:w-8" />}
-                <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
-              </Button>
-              <Button onClick={handleNext} variant="ghost" size="lg" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
-                <FastForward className="h-6 w-6" />
-                <span className="sr-only">Next sentence</span>
-              </Button>
-          </div>
                 
           {hasStarredSentences && (
             <div className="flex items-center justify-center space-x-2">
