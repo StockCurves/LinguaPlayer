@@ -728,6 +728,79 @@ def refine_srt():
         mp3_path.unlink(missing_ok=True)
 
 
+@app.route("/api/export-sentence-mp3", methods=["POST", "OPTIONS"])
+def export_sentence_mp3():
+    """
+    Slice a region from an uploaded MP3 and return it as an MP3 file.
+
+    Expects multipart/form-data with:
+      - file: the full MP3 audio file
+      - start_ms: start of the slice in milliseconds
+      - end_ms:   end   of the slice in milliseconds
+      - filename: desired output filename (e.g. "FRE0004.mp3")
+    Returns: the sliced MP3 as a downloadable file.
+    """
+    if request.method == "OPTIONS":
+        return "", 204
+
+    if "file" not in request.files:
+        return jsonify({"error": "No audio file uploaded"}), 400
+
+    audio_file = request.files["file"]
+    start_ms = request.form.get("start_ms")
+    end_ms = request.form.get("end_ms")
+    filename = request.form.get("filename", "export.mp3")
+
+    if start_ms is None or end_ms is None:
+        return jsonify({"error": "start_ms and end_ms are required"}), 400
+
+    try:
+        start_ms = int(float(start_ms))
+        end_ms = int(float(end_ms))
+    except (ValueError, TypeError):
+        return jsonify({"error": "start_ms and end_ms must be numbers"}), 400
+
+    # Save uploaded file to temp
+    file_id = hashlib.md5(
+        f"{audio_file.filename}_{start_ms}_{end_ms}".encode()
+    ).hexdigest()[:12]
+    mp3_path = TEMP_DIR / f"export_src_{file_id}.mp3"
+
+    try:
+        from pydub import AudioSegment
+        import io
+
+        if not mp3_path.exists():
+            audio_file.save(str(mp3_path))
+
+        audio = AudioSegment.from_mp3(str(mp3_path))
+        segment = audio[start_ms:end_ms]
+
+        # Normalize volume to -17 dBFS
+        TARGET_DBFS = -15.0
+        if segment.dBFS != float('-inf') and len(segment) > 0:
+            gain = TARGET_DBFS - segment.dBFS
+            segment = segment.apply_gain(gain)
+
+        # Export to in-memory buffer
+        buf = io.BytesIO()
+        segment.export(buf, format="mp3", bitrate="192k")
+        buf.seek(0)
+
+        return send_file(
+            buf,
+            mimetype="audio/mpeg",
+            as_attachment=True,
+            download_name=filename,
+        )
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        mp3_path.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     print("🎵 LinguaPlayer Backend — YouTube to SRT + MP3 Upload")
     print(f"   MP3 cache  : {MP3_CACHE_DIR}")

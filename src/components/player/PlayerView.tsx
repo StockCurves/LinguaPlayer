@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Rewind, FastForward, Play, Pause, Star, StarOff, Check, X, Download, FileText, FileCode, GitCompare, ChevronDown, ChevronUp } from 'lucide-react';
+import { Rewind, FastForward, Play, Pause, Star, StarOff, Check, X, Download, FileText, FileCode, GitCompare, ChevronDown, ChevronUp, Undo2, Scissors, Merge, Trash2, Loader2, Music } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { VolumeDisplay } from '@/components/ui/volume-display';
@@ -11,6 +11,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import type { Subtitle } from '@/app/page';
 
 interface PlayerViewProps {
@@ -55,6 +57,13 @@ export function PlayerView({
   const [editingText, setEditingText] = useState('');
   const [isTimingEditing, setIsTimingEditing] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
+  const [undoStack, setUndoStack] = useState<Subtitle[][]>([]);
+
+  // ── Export starred MP3s dialog state ───────────────────────────────────
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportPrefix, setExportPrefix] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState({ current: 0, total: 0 });
 
   const sentenceScrollRef = useRef<(HTMLDivElement | null)[]>([]);
   const lastUnfilteredIndexRef = useRef(0);
@@ -64,9 +73,8 @@ export function PlayerView({
   const visibleSubtitles = showOnlyStarred && hasStarredSentences ? subtitles.filter(sub => sub.isStarred) : subtitles;
 
   const secondsToSrtTime = (seconds: number): string => {
-    const date = new Date(0);
-    date.setSeconds(seconds);
-    const time = date.toISOString().substr(11, 12);
+    const date = new Date(Math.round(seconds * 1000));
+    const time = date.toISOString().substring(11, 23);
     return time.replace('.', ',');
   };
 
@@ -90,15 +98,136 @@ export function PlayerView({
     }
   };
 
-  const handleTimingSave = (newStartTime: number, newEndTime: number) => {
-    const currentSub = subtitles[currentSentenceIndex];
-    if (!currentSub) return;
+  // ─── Undo helpers ──────────────────────────────────────────────────────────
+  const MAX_UNDO = 20;
 
-    const newSubtitles = subtitles.map((sub) =>
-      sub.id === currentSub.id ? { ...sub, startTime: newStartTime, endTime: newEndTime } : sub
-    );
-    setSubtitles(newSubtitles);
-    updateSrtContent(newSubtitles); // routes to active SRT string
+  /** Push current subtitles onto the undo stack before a destructive op. */
+  const pushUndo = (prev: Subtitle[]) => {
+    setUndoStack(stack => [...stack.slice(-MAX_UNDO + 1), prev]);
+  };
+
+  /** Apply new subtitles, renumber IDs, sync SRT content. */
+  const applySubtitles = (newSubsOrFn: Subtitle[] | ((prev: Subtitle[]) => Subtitle[]), nextIndex?: number) => {
+    setSubtitles(prev => {
+      const nextSubs = typeof newSubsOrFn === 'function' ? newSubsOrFn(prev) : newSubsOrFn;
+      // Re-number IDs sequentially so SRT stays valid
+      const renumbered = nextSubs.map((s, i) => ({ ...s, id: i + 1 }));
+      updateSrtContent(renumbered);
+      return renumbered;
+    });
+
+    if (nextIndex !== undefined) {
+      setCurrentSentenceIndex(prev => {
+        // We'll need the length, but since setSubtitles is async, 
+        // we'll just clamp to a reasonably safe upper bound or use another effect
+        return nextIndex;
+      });
+    }
+  };
+
+  // ─── Remove current subtitle ───────────────────────────────────────────────
+  const handleRemove = () => {
+    if (subtitles.length === 0) return;
+    const idx = currentSentenceIndex;
+    const subId = subtitles[idx]?.id;
+    if (subId === undefined) return;
+
+    pushUndo(subtitles);
+    applySubtitles(prev => prev.filter(s => s.id !== subId), Math.max(0, idx - 1));
+    toast({ title: 'Subtitle Removed', description: `Subtitle deleted.` });
+  };
+
+  // ─── Merge current subtitle with the next one ──────────────────────────────
+  const handleMerge = () => {
+    const idx = currentSentenceIndex;
+    if (idx < 0 || idx >= subtitles.length - 1) return;
+
+    const curId = subtitles[idx].id;
+    const nextId = subtitles[idx + 1].id;
+
+    pushUndo(subtitles);
+    applySubtitles(prev => {
+      const curIdx = prev.findIndex(s => s.id === curId);
+      const nextIdx = prev.findIndex(s => s.id === nextId);
+      if (curIdx === -1 || nextIdx === -1) return prev;
+
+      const curRow = prev[curIdx];
+      const nextRow = prev[nextIdx];
+
+      const merged: Subtitle = {
+        ...curRow,
+        endTime: nextRow.endTime,
+        text: `${curRow.text} ${nextRow.text}`.trim(),
+        isStarred: curRow.isStarred || nextRow.isStarred,
+      };
+
+      const result = [...prev];
+      result.splice(curIdx, 2, merged);
+      return result;
+    }, idx);
+    toast({ title: 'Subtitles Merged', description: `Subtitles merged.` });
+  };
+
+  // ─── Split current subtitle at midpoint ────────────────────────────────────
+  const handleSplit = () => {
+    const idx = currentSentenceIndex;
+    const subToSplit = subtitles[idx];
+    if (!subToSplit) return;
+    const targetId = subToSplit.id;
+
+    pushUndo(subtitles);
+    applySubtitles(prev => {
+      const sIdx = prev.findIndex(s => s.id === targetId);
+      if (sIdx === -1) return prev;
+
+      const sub = prev[sIdx];
+      const midTime = (sub.startTime + sub.endTime) / 2;
+      const words = sub.text.trim().split(/\s+/);
+      const midWord = Math.max(1, Math.floor(words.length / 2));
+      const textA = words.slice(0, midWord).join(' ');
+      const textB = words.slice(midWord).join(' ') || textA;
+
+      const partA: Subtitle = { ...sub, endTime: midTime, text: textA };
+      const partB: Subtitle = { ...sub, id: sub.id + 0.5, startTime: midTime, text: textB, isStarred: false };
+
+      const result = [...prev];
+      result.splice(sIdx, 1, partA, partB);
+      return result;
+    }, idx);
+    toast({ title: 'Subtitle Split', description: `Subtitle split in two.` });
+  };
+
+  // ─── Undo last operation ───────────────────────────────────────────────────
+  const handleUndo = () => {
+    if (undoStack.length === 0) return;
+    const prev = undoStack[undoStack.length - 1];
+    setUndoStack(stack => stack.slice(0, -1));
+    setSubtitles(prev);
+    updateSrtContent(prev);
+    // Restore index within bounds
+    setCurrentSentenceIndex(idx => Math.min(idx, prev.length - 1));
+    toast({ title: 'Undone', description: 'Last subtitle change reverted.' });
+  };
+
+  const handleTimingSave = (newStartTime: number, newEndTime: number) => {
+    // Determine which ID we are editing based on current total list
+    const subToEdit = subtitles[currentSentenceIndex];
+    if (!subToEdit) return;
+    const targetId = subToEdit.id;
+
+    // Round to nearest 50ms
+    const roundedStart = Math.round(newStartTime * 20) / 20;
+    const roundedEnd = Math.round(newEndTime * 20) / 20;
+
+    pushUndo(subtitles);
+    setSubtitles(prev => {
+      const updated = prev.map(sub =>
+        sub.id === targetId ? { ...sub, startTime: roundedStart, endTime: roundedEnd } : sub
+      );
+      // Update the SRT string source as well
+      updateSrtContent(updated);
+      return updated;
+    });
 
     setIsTimingEditing(false);
     toast({
@@ -179,11 +308,13 @@ export function PlayerView({
   };
 
   const handleSaveEdit = (id: number) => {
-    const newSubtitles = subtitles.map(sub =>
-      sub.id === id ? { ...sub, text: editingText } : sub
-    );
-    setSubtitles(newSubtitles);
-    updateSrtContent(newSubtitles);
+    setSubtitles(prev => {
+      const updated = prev.map(sub =>
+        sub.id === id ? { ...sub, text: editingText } : sub
+      );
+      updateSrtContent(updated);
+      return updated;
+    });
     setEditingSubtitleId(null);
     setEditingText('');
     toast({
@@ -246,13 +377,11 @@ export function PlayerView({
   };
 
   const handleStarAll = () => {
-    const newSubtitles = subtitles.map(sub => ({ ...sub, isStarred: true }));
-    setSubtitles(newSubtitles);
+    setSubtitles(prev => prev.map(sub => ({ ...sub, isStarred: true })));
   };
 
   const handleUnstarAll = () => {
-    const newSubtitles = subtitles.map(sub => ({ ...sub, isStarred: false }));
-    setSubtitles(newSubtitles);
+    setSubtitles(prev => prev.map(sub => ({ ...sub, isStarred: false })));
     // Reset filter if it was active
     if (showOnlyStarred) {
       setShowOnlyStarred(false);
@@ -329,6 +458,97 @@ export function PlayerView({
     toast({
       title: "Coming Soon!",
       description: "Markdown export functionality is not yet implemented.",
+    });
+  };
+
+  // ── Export starred sentences as individual MP3s ──────────────────────────
+  const BACKEND_URL = "http://localhost:5000";
+
+  /**
+   * Parse a filename prefix like "FRE0004" into { alpha: "FRE", startNum: 4, padding: 4 }
+   * Also supports pure numeric like "0004" → { alpha: "", startNum: 4, padding: 4 }
+   * Or plain text like "sentence" → { alpha: "sentence", startNum: 1, padding: 0 }
+   */
+  const parsePrefix = (input: string): { alpha: string; startNum: number; padding: number } => {
+    const match = input.match(/^(.*?)(\d+)$/);
+    if (match) {
+      const alpha = match[1];
+      const numStr = match[2];
+      return { alpha, startNum: parseInt(numStr, 10), padding: numStr.length };
+    }
+    // No trailing number — default to sequential from 1 with no padding
+    return { alpha: input || 'sentence_', startNum: 1, padding: 0 };
+  };
+
+  const generateFileName = (alpha: string, num: number, padding: number): string => {
+    if (padding > 0) {
+      return `${alpha}${String(num).padStart(padding, '0')}.mp3`;
+    }
+    return `${alpha}${num}.mp3`;
+  };
+
+  const handleExportStarredMp3s = async () => {
+    const starred = subtitles.filter(sub => sub.isStarred);
+    if (starred.length === 0) {
+      toast({ variant: 'destructive', title: 'No Starred Sentences', description: 'Star some sentences first.' });
+      return;
+    }
+
+    const { alpha, startNum, padding } = parsePrefix(exportPrefix.trim());
+    setIsExporting(true);
+    setExportProgress({ current: 0, total: starred.length });
+
+    let successCount = 0;
+
+    for (let i = 0; i < starred.length; i++) {
+      const sub = starred[i];
+      const fileName = generateFileName(alpha, startNum + i, padding);
+      setExportProgress({ current: i + 1, total: starred.length });
+
+      try {
+        const formData = new FormData();
+        formData.append('file', audioFile);
+        formData.append('start_ms', String(Math.round(sub.startTime * 1000)));
+        formData.append('end_ms', String(Math.round(sub.endTime * 1000)));
+        formData.append('filename', fileName);
+
+        const res = await fetch(`${BACKEND_URL}/api/export-sentence-mp3`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+          console.error(`Failed to export ${fileName}:`, err);
+          continue;
+        }
+
+        // Download the returned MP3
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        successCount++;
+
+        // Small delay between downloads to avoid browser throttling
+        if (i < starred.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+      } catch (err) {
+        console.error(`Failed to export ${fileName}:`, err);
+      }
+    }
+
+    setIsExporting(false);
+    setShowExportDialog(false);
+    toast({
+      title: 'Export Complete!',
+      description: `${successCount} of ${starred.length} MP3 files exported.`,
     });
   };
 
@@ -487,6 +707,61 @@ export function PlayerView({
         <>
           <Progress value={sentenceProgress} className="w-full h-2 [&>div]:bg-accent" />
 
+          {/* ── Edit Operations Toolbar ─────────────────────────────────── */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide mr-1">Edit</span>
+              <Button
+                id="subtitle-remove-btn"
+                onClick={handleRemove}
+                variant="ghost"
+                size="sm"
+                disabled={subtitles.length === 0 || currentSentenceIndex < 0}
+                title="Remove current subtitle (delete it)"
+                className="h-8 gap-1.5 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Remove
+              </Button>
+              <Button
+                id="subtitle-merge-btn"
+                onClick={handleMerge}
+                variant="ghost"
+                size="sm"
+                disabled={currentSentenceIndex < 0 || currentSentenceIndex >= subtitles.length - 1}
+                title="Merge current subtitle with the next one"
+                className="h-8 gap-1.5 text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+              >
+                <Merge className="w-3.5 h-3.5" />
+                Merge ↓
+              </Button>
+              <Button
+                id="subtitle-split-btn"
+                onClick={handleSplit}
+                variant="ghost"
+                size="sm"
+                disabled={currentSentenceIndex < 0}
+                title="Split current subtitle into two halves"
+                className="h-8 gap-1.5 text-violet-500 hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30"
+              >
+                <Scissors className="w-3.5 h-3.5" />
+                Split
+              </Button>
+            </div>
+            <Button
+              id="subtitle-undo-btn"
+              onClick={handleUndo}
+              variant="ghost"
+              size="sm"
+              disabled={undoStack.length === 0}
+              title={`Undo last operation (${undoStack.length} step${undoStack.length !== 1 ? 's' : ''} available)`}
+              className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+              Undo {undoStack.length > 0 && <span className="text-[10px] font-mono ml-0.5 opacity-60">({undoStack.length})</span>}
+            </Button>
+          </div>
+
           <ScrollArea className="h-80 w-full rounded-md border p-4">
             <div className="flex flex-col gap-2">
               {visibleSubtitles.map((sub, index) => {
@@ -586,14 +861,27 @@ export function PlayerView({
               Unstar All
             </Button>
             {hasStarredSentences && (
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="show-starred"
-                  checked={showOnlyStarred}
-                  onCheckedChange={handleShowStarredToggle}
-                />
-                <Label htmlFor="show-starred">Show Starred Only</Label>
-              </div>
+              <>
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="show-starred"
+                    checked={showOnlyStarred}
+                    onCheckedChange={handleShowStarredToggle}
+                  />
+                  <Label htmlFor="show-starred">Show Starred Only</Label>
+                </div>
+                <Button
+                  onClick={() => setShowExportDialog(true)}
+                  variant="ghost"
+                  size="sm"
+                  className="text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                  id="export-starred-mp3s-btn"
+                  title="Export each starred sentence as an individual MP3 file"
+                >
+                  <Music className="w-4 h-4 mr-1" />
+                  Export Starred .mp3s
+                </Button>
+              </>
             )}
           </div>
 
@@ -697,6 +985,104 @@ export function PlayerView({
               )}
             </div>
           )}
+
+          {/* ── Export Starred MP3s Dialog ──────────────────────────────── */}
+          <Dialog open={showExportDialog} onOpenChange={(open) => { if (!isExporting) setShowExportDialog(open); }}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Music className="w-5 h-5 text-emerald-500" />
+                  Export Starred Sentences as MP3
+                </DialogTitle>
+                <DialogDescription>
+                  Each starred sentence will be exported as an individual .mp3 file, sliced from the audio based on timestamps.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="flex flex-col gap-4 py-2">
+                {/* Starred count */}
+                <div className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">{subtitles.filter(s => s.isStarred).length}</span> starred sentence{subtitles.filter(s => s.isStarred).length !== 1 ? 's' : ''} will be exported.
+                </div>
+
+                {/* Prefix input */}
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="export-prefix" className="text-sm font-medium">
+                    Filename prefix
+                  </Label>
+                  <Input
+                    id="export-prefix"
+                    placeholder="e.g. FRE0004"
+                    value={exportPrefix}
+                    onChange={(e) => setExportPrefix(e.target.value)}
+                    disabled={isExporting}
+                    autoFocus
+                    className="font-mono"
+                  />
+                  {/* Preview */}
+                  {exportPrefix.trim() && (() => {
+                    const { alpha, startNum, padding } = parsePrefix(exportPrefix.trim());
+                    const starredCount = subtitles.filter(s => s.isStarred).length;
+                    const previewNames = Array.from({ length: Math.min(starredCount, 3) }, (_, i) =>
+                      generateFileName(alpha, startNum + i, padding)
+                    );
+                    return (
+                      <div className="rounded-md bg-muted/50 border p-3 text-xs font-mono space-y-0.5">
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-sans font-medium block mb-1">Preview</span>
+                        {previewNames.map((name, i) => (
+                          <div key={i} className="text-foreground">{name}</div>
+                        ))}
+                        {starredCount > 3 && (
+                          <div className="text-muted-foreground">… and {starredCount - 3} more</div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Progress */}
+                {isExporting && (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />
+                      Exporting {exportProgress.current} of {exportProgress.total}…
+                    </div>
+                    <Progress
+                      value={exportProgress.total > 0 ? (exportProgress.current / exportProgress.total) * 100 : 0}
+                      className="h-2 [&>div]:bg-emerald-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button
+                  variant="ghost"
+                  onClick={() => setShowExportDialog(false)}
+                  disabled={isExporting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleExportStarredMp3s}
+                  disabled={isExporting || !exportPrefix.trim() || !hasStarredSentences}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                >
+                  {isExporting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Exporting…
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4 mr-2" />
+                      Export {subtitles.filter(s => s.isStarred).length} MP3s
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </>
       )}
     </div>

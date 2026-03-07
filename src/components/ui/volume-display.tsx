@@ -185,17 +185,18 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
       const x = e.clientX - rect.left;
       const percent = Math.max(0, Math.min(1, x / rect.width));
       const newTime = viewStartTimeRef.current + (percent * viewDurationRef.current);
+      const snappedTime = Math.round(newTime * 20) / 20;
 
       const audioDuration = audioElementRef.current?.duration ?? Infinity;
       const MIN_DUR = 0.1;
 
       if (draggingHandleRef.current === 'start') {
         // Only constrain: can't go below 0, can't cross end handle
-        const clamped = Math.max(0, Math.min(newTime, (tempEndTimeRef.current ?? 0) - MIN_DUR));
+        const clamped = Math.max(0, Math.min(snappedTime, (tempEndTimeRef.current ?? 0) - MIN_DUR));
         setTempStartTime(clamped);
       } else {
         // Only constrain: can't exceed audio duration, can't cross start handle
-        const clamped = Math.min(audioDuration, Math.max(newTime, (tempStartTimeRef.current ?? 0) + MIN_DUR));
+        const clamped = Math.min(audioDuration, Math.max(snappedTime, (tempStartTimeRef.current ?? 0) + MIN_DUR));
         setTempEndTime(clamped);
       }
     };

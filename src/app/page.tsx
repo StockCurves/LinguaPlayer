@@ -15,7 +15,7 @@ export type Subtitle = {
   startTime: number;
   endTime: number;
   text: string;
-  isStarred?: boolean;
+  isStarred: boolean;
 };
 
 const BACKEND_URL = "http://localhost:5000";
@@ -131,13 +131,33 @@ export default function LinguaPlayerPage() {
     if (mode === activeSrtMode) return;
     const targetSrt = mode === 'adjusted' ? srtContentAdjusted : srtContent;
     if (!targetSrt) return;
+
     try {
-      const subs = parseSrtText(targetSrt);
-      setSubtitles(subs);
-      setCurrentSentenceIndex(0);
+      const newSubs = parseSrtText(targetSrt);
+
+      setSubtitles(prev => {
+        // If the structure matches (same number of sentences), preserve the 
+        // current text and star status, only updating the timestamps.
+        if (prev.length === newSubs.length) {
+          return prev.map((oldSub, i) => ({
+            ...oldSub,
+            startTime: newSubs[i].startTime,
+            endTime: newSubs[i].endTime
+          }));
+        }
+        // Fallback: full replacement if structure changed (e.g. after split/merge)
+        return newSubs;
+      });
+
       setActiveSrtMode(mode);
+      // We don't reset currentSentenceIndex here to keep user's place
     } catch (e) {
       console.error('Failed to switch SRT mode:', e);
+      toast({
+        variant: "destructive",
+        title: "Mode Switch Failed",
+        description: "Could not parse timestamps for the selected mode."
+      });
     }
   };
 
