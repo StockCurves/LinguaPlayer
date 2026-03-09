@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { UploadCloud, FileAudio, FileText, CheckCircle2, Coffee, Youtube, Loader2, Wand2 } from 'lucide-react';
+import { UploadCloud, FileAudio, FileText, CheckCircle2, Coffee, Loader2, Wand2, Globe } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { PlayerView } from '@/components/player/PlayerView';
@@ -33,8 +33,8 @@ export default function LinguaPlayerPage() {
   const [sentenceProgress, setSentenceProgress] = useState(0);
   const [isDragging, setIsDragging] = useState<'audio' | 'srt' | null>(null);
 
-  // YouTube processing state
-  const [youtubeUrl, setYoutubeUrl] = useState('');
+  // URL processing state (YouTube or podcast)
+  const [mediaUrl, setMediaUrl] = useState('');
   const [whisperModel, setWhisperModel] = useState('base');
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
@@ -256,22 +256,30 @@ export default function LinguaPlayerPage() {
     }
   };
 
-  // ── YouTube Processing ──────────────────────────────────────────────
+  // ── URL Processing (auto-detects YouTube vs Podcast) ────────────────
 
-  const handleProcessYoutube = async () => {
-    if (!youtubeUrl.trim()) {
-      toast({ variant: "destructive", title: "No URL", description: "Please enter a YouTube URL." });
+  const isYoutubeUrl = (url: string): boolean => {
+    return /(?:youtube\.com|youtu\.be)/i.test(url);
+  };
+
+  const handleProcessUrl = async () => {
+    if (!mediaUrl.trim()) {
+      toast({ variant: "destructive", title: "No URL", description: "Please enter a URL." });
       return;
     }
 
+    const url = mediaUrl.trim();
+    const isYT = isYoutubeUrl(url);
+    const endpoint = isYT ? '/api/process-youtube' : '/api/process-podcast';
+
     setIsProcessing(true);
-    setProcessingStatus("Downloading audio & transcribing with Whisper…");
+    setProcessingStatus(isYT ? "Downloading YouTube audio & transcribing…" : "Downloading podcast audio & transcribing…");
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/process-youtube`, {
+      const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: youtubeUrl.trim(), model: whisperModel }),
+        body: JSON.stringify({ url, model: whisperModel }),
       });
 
       if (!res.ok) {
@@ -303,7 +311,7 @@ export default function LinguaPlayerPage() {
         description: `${data.sentence_count} sentences transcribed.`,
       });
     } catch (error) {
-      console.error("YouTube processing error:", error);
+      console.error("URL processing error:", error);
       toast({
         variant: "destructive",
         title: "Processing Failed",
@@ -397,13 +405,13 @@ export default function LinguaPlayerPage() {
   const UploadBox = ({ type }: { type: 'audio' | 'srt' }) => {
     const file = type === 'audio' ? audioFile : srtFile;
     const Icon = type === 'audio' ? FileAudio : FileText;
-    const title = type === 'audio' ? 'Upload Audio File' : 'Upload Subtitle File';
+    const title = type === 'audio' ? 'Upload Audio' : 'Upload Subtitle';
     const accept = type === 'audio' ? 'audio/*' : '.srt';
 
     return (
       <div
         className={cn(
-          "relative flex flex-col items-center justify-center p-6 sm:p-8 border-2 border-dashed rounded-lg text-center cursor-pointer transition-colors",
+          "relative flex flex-col items-center justify-center p-4 sm:p-6 border-2 border-dashed rounded-lg text-center cursor-pointer transition-colors",
           isDragging === type ? 'border-primary bg-primary/10' : 'border-border hover:border-primary hover:bg-accent/10'
         )}
         onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(type); }}
@@ -412,15 +420,15 @@ export default function LinguaPlayerPage() {
         onDrop={(e) => handleDrop(e, type)}
       >
         {file ? (
-          <div className="flex flex-col items-center gap-3 py-4 text-green-600 dark:text-green-400">
-            <CheckCircle2 className="w-12 h-12" />
-            <span className="font-medium text-sm text-center break-all">{file.name}</span>
+          <div className="flex flex-col items-center gap-2 py-2 text-green-600 dark:text-green-400">
+            <CheckCircle2 className="w-8 h-8" />
+            <span className="font-medium text-xs text-center break-all line-clamp-2">{file.name}</span>
           </div>
         ) : (
           <>
-            <UploadCloud className="w-10 h-10 text-muted-foreground mb-3" />
-            <h3 className="font-semibold">{title}</h3>
-            <p className="text-muted-foreground text-sm">Click or drag & drop</p>
+            <UploadCloud className="w-8 h-8 text-muted-foreground mb-2" />
+            <h3 className="font-semibold text-sm">{title}</h3>
+            <p className="text-muted-foreground text-xs">Click or drag & drop</p>
           </>
         )}
         <Input
@@ -434,37 +442,78 @@ export default function LinguaPlayerPage() {
     );
   };
 
+  // ── Reset to upload page ──────────────────────────────────────────────
+  const handleBackToUpload = () => {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    setAudioFile(null);
+    setSrtFile(null);
+    setSrtContent('');
+    setSrtContentAdjusted('');
+    setActiveSrtMode('original');
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioUrl(null);
+    setSubtitles([]);
+    setCurrentSentenceIndex(-1);
+    setIsPlaying(false);
+    setSentenceProgress(0);
+    lastRefinedKeyRef.current = '';
+  };
+
   // Show upload view when there's no audio, or audio is present but subtitles haven't been loaded yet
   const showUploadView = !audioFile || subtitles.length === 0;
 
   return (
-    <main ref={mainContainerRef} tabIndex={-1} className="flex min-h-dvh w-full flex-col items-center justify-center bg-background p-4 sm:p-6 md:p-8 font-body focus:outline-none">
-      <Card className="w-full max-w-2xl shadow-xl rounded-2xl animate-in fade-in zoom-in-95 duration-500">
-        <CardHeader className="text-center">
-          <CardTitle className="text-3xl font-headline tracking-tight">Lingua Player</CardTitle>
-          <CardDescription>Practice listening sentence by sentence.</CardDescription>
+    <main ref={mainContainerRef} tabIndex={-1} className={cn(
+      "flex w-full flex-col items-center bg-background font-body focus:outline-none",
+      showUploadView
+        ? "min-h-dvh justify-center p-4 sm:p-6 md:p-8"
+        : "h-dvh p-2 sm:p-3"
+    )}>
+      <Card className={cn(
+        "w-full shadow-xl animate-in fade-in zoom-in-95 duration-500",
+        showUploadView
+          ? "max-w-2xl rounded-2xl"
+          : "max-w-4xl rounded-xl flex flex-col overflow-hidden",
+        !showUploadView && "flex-1 min-h-0"
+      )}>
+        <CardHeader className={cn("text-center", !showUploadView && "py-1")}>
+          <CardTitle
+            className={cn(
+              showUploadView ? "text-3xl" : "text-base cursor-pointer hover:text-primary transition-colors",
+              "font-headline tracking-tight"
+            )}
+            onClick={!showUploadView ? handleBackToUpload : undefined}
+            title={!showUploadView ? 'Back to upload page' : undefined}
+          >
+            Lingua Player
+          </CardTitle>
+          {showUploadView && <CardDescription>Practice listening sentence by sentence.</CardDescription>}
         </CardHeader>
-        <CardContent>
+        <CardContent className={cn(!showUploadView && "flex-1 min-h-0 flex flex-col p-3 sm:p-4")}>
           {showUploadView ? (
             <div className="flex flex-col gap-6">
-              {/* ── YouTube URL Section ──────────────────────────── */}
+              {/* ── URL Section (YouTube / Podcast) ─────────────── */}
               <div className="flex flex-col gap-3 p-4 sm:p-6 border-2 border-dashed rounded-lg border-border bg-accent/5">
                 <div className="flex items-center gap-2 text-foreground">
-                  <Youtube className="w-5 h-5 text-red-500" />
-                  <h3 className="font-semibold">From YouTube</h3>
+                  <Globe className="w-5 h-5 text-blue-500" />
+                  <h3 className="font-semibold">From URL</h3>
                 </div>
                 <p className="text-muted-foreground text-sm">
-                  Paste a YouTube URL to auto-download audio & generate subtitles with Whisper.
+                  Paste a YouTube video URL, podcast episode link, or direct MP3 URL to auto-download audio &amp; generate subtitles with Whisper.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <Input
                     type="url"
-                    placeholder="https://www.youtube.com/watch?v=..."
-                    value={youtubeUrl}
-                    onChange={(e) => setYoutubeUrl(e.target.value)}
+                    placeholder="YouTube URL, podcast URL, or direct .mp3 link"
+                    value={mediaUrl}
+                    onChange={(e) => setMediaUrl(e.target.value)}
                     disabled={isProcessing}
                     className="flex-1"
-                    id="youtube-url-input"
+                    id="media-url-input"
                   />
                   <Select value={whisperModel} onValueChange={setWhisperModel} disabled={isProcessing}>
                     <SelectTrigger className="w-full sm:w-[120px]" id="model-select">
@@ -478,10 +527,10 @@ export default function LinguaPlayerPage() {
                   </Select>
                 </div>
                 <Button
-                  onClick={handleProcessYoutube}
-                  disabled={isProcessing || !youtubeUrl.trim()}
+                  onClick={handleProcessUrl}
+                  disabled={isProcessing || !mediaUrl.trim()}
                   className="w-full"
-                  id="process-youtube-btn"
+                  id="process-url-btn"
                 >
                   {isProcessing ? (
                     <>
@@ -489,7 +538,7 @@ export default function LinguaPlayerPage() {
                       {processingStatus || "Processing…"}
                     </>
                   ) : (
-                    "Process YouTube Video"
+                    "Download & Transcribe"
                   )}
                 </Button>
               </div>
@@ -502,7 +551,7 @@ export default function LinguaPlayerPage() {
               </div>
 
               {/* ── Manual Upload Section ───────────────────────── */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <UploadBox type="audio" />
                 <UploadBox type="srt" />
               </div>
@@ -572,12 +621,7 @@ export default function LinguaPlayerPage() {
           )}
         </CardContent>
         {audioFile && subtitles.length > 0 && (
-          <CardFooter className="flex flex-col gap-4 items-center justify-center text-sm text-muted-foreground pt-4">
-            {subtitles.length > 0 && currentSentenceIndex !== -1 && (
-              <span>
-                Sentence {subtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) + 1} of {subtitles.length}
-              </span>
-            )}
+          <CardFooter className="flex items-center justify-center text-sm text-muted-foreground py-2">
             <a
               href="https://buymeacoffee.com/stockcurves"
               target="_blank"

@@ -14,6 +14,8 @@ interface VolumeDisplayProps {
   isTimingEditing: boolean;
   setIsTimingEditing: (isEditing: boolean) => void;
   onSave: (newStartTime: number, newEndTime: number) => void;
+  onPlaySentence: (index: number) => void;
+  onNavigateToSentence: (index: number) => void;
 }
 
 const drawWaveform = (
@@ -77,7 +79,7 @@ const formatTime = (seconds: number): string => {
   return `${m}:${s}`;
 };
 
-export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, audioFile, isTimingEditing, setIsTimingEditing, onSave }: VolumeDisplayProps) {
+export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, audioFile, isTimingEditing, setIsTimingEditing, onSave, onPlaySentence, onNavigateToSentence }: VolumeDisplayProps) {
   const [waveformBuffer, setWaveformBuffer] = useState<AudioBuffer | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -99,6 +101,16 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
   const isTimingEditingRef = useRef(isTimingEditing);
   const setIsTimingEditingRef = useRef(setIsTimingEditing);
   const onSaveRef = useRef(onSave);
+  const onPlaySentenceRef = useRef(onPlaySentence);
+  const onNavigateToSentenceRef = useRef(onNavigateToSentence);
+  const backgroundDraggingRef = useRef(false);
+  const edgeScrollIntervalRef = useRef<number | null>(null);
+  const edgeScrollDirRef = useRef<-1 | 0 | 1>(0);
+  const edgeScrollSpeedRef = useRef(250); // ms between auto-steps, decreases over time
+  // Blocks the click handler from firing after a drag or handle-mousedown
+  const clickBlockedRef = useRef(false);
+  // Tracks a handle mousedown that hasn't started dragging yet (pending intent)
+  const pendingEditHandleRef = useRef<'start' | 'end' | null>(null);
 
   // Keep refs in sync
   useEffect(() => { tempStartTimeRef.current = tempStartTime; }, [tempStartTime]);
@@ -109,6 +121,8 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
   useEffect(() => { isTimingEditingRef.current = isTimingEditing; }, [isTimingEditing]);
   useEffect(() => { setIsTimingEditingRef.current = setIsTimingEditing; }, [setIsTimingEditing]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+  useEffect(() => { onPlaySentenceRef.current = onPlaySentence; }, [onPlaySentence]);
+  useEffect(() => { onNavigateToSentenceRef.current = onNavigateToSentence; }, [onNavigateToSentence]);
 
   const sentencesInView = 5;
 
@@ -176,35 +190,129 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     }
   }, [waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime, viewDuration]);
 
+  // ─── Helper: find which subtitle index a given time falls into ───────────────
+  const findSubtitleAtTime = (time: number): number => {
+    const subs = subtitlesRef.current;
+    for (let i = 0; i < subs.length; i++) {
+      if (time >= subs[i].startTime && time <= subs[i].endTime) return i;
+    }
+    // If in a gap between subtitles, find the nearest one
+    let closest = -1;
+    let minDist = Infinity;
+    for (let i = 0; i < subs.length; i++) {
+      const d = Math.min(Math.abs(time - subs[i].startTime), Math.abs(time - subs[i].endTime));
+      if (d < minDist) { minDist = d; closest = i; }
+    }
+    return closest;
+  };
+
+  // ─── Edge-scroll helper: start/stop auto-advance at edges ───────────────────
+  const startEdgeScroll = (dir: -1 | 1) => {
+    if (edgeScrollDirRef.current === dir && edgeScrollIntervalRef.current) return; // already scrolling this direction
+    stopEdgeScroll();
+    edgeScrollDirRef.current = dir;
+    edgeScrollSpeedRef.current = 250; // start slow
+
+    const step = () => {
+      const cur = currentSentenceIndexRef.current;
+      const next = cur + dir;
+      if (next >= 0 && next < subtitlesRef.current.length) {
+        onNavigateToSentenceRef.current(next);
+      }
+      // Accelerate: reduce interval (min 100ms)
+      edgeScrollSpeedRef.current = Math.max(100, edgeScrollSpeedRef.current - 20);
+      // Re-schedule with new speed
+      edgeScrollIntervalRef.current = window.setTimeout(step, edgeScrollSpeedRef.current);
+    };
+
+    // First step fires immediately
+    step();
+  };
+
+  const stopEdgeScroll = () => {
+    if (edgeScrollIntervalRef.current) {
+      clearTimeout(edgeScrollIntervalRef.current);
+      edgeScrollIntervalRef.current = null;
+    }
+    edgeScrollDirRef.current = 0;
+    edgeScrollSpeedRef.current = 250;
+  };
+
   // ─── Mouse drag listeners (attached once, uses refs) ────────────────────────
   useEffect(() => {
+    const EDGE_ZONE = 0.10; // 10% from each edge triggers auto-scroll
+
     const onMouseMove = (e: MouseEvent) => {
-      if (!draggingHandleRef.current || !containerRef.current) return;
+      if (!containerRef.current) return;
 
-      const rect = containerRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const percent = Math.max(0, Math.min(1, x / rect.width));
-      const newTime = viewStartTimeRef.current + (percent * viewDurationRef.current);
-      const snappedTime = Math.round(newTime * 20) / 20;
+      // ── Handle drag (adjusting timestamp handles) ──
+      if (draggingHandleRef.current) {
+        // Enter edit mode lazily on first actual movement (not on mousedown)
+        if (!isTimingEditingRef.current) {
+          if (audioElementRef.current) audioElementRef.current.pause();
+          setIsTimingEditingRef.current(true);
+          isTimingEditingRef.current = true;
+        }
+        const rect = containerRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const percent = Math.max(0, Math.min(1, x / rect.width));
+        const newTime = viewStartTimeRef.current + (percent * viewDurationRef.current);
+        const snappedTime = Math.round(newTime * 20) / 20;
 
-      const audioDuration = audioElementRef.current?.duration ?? Infinity;
-      const MIN_DUR = 0.1;
+        const audioDuration = audioElementRef.current?.duration ?? Infinity;
+        const MIN_DUR = 0.1;
 
-      if (draggingHandleRef.current === 'start') {
-        // Only constrain: can't go below 0, can't cross end handle
-        const clamped = Math.max(0, Math.min(snappedTime, (tempEndTimeRef.current ?? 0) - MIN_DUR));
-        setTempStartTime(clamped);
-      } else {
-        // Only constrain: can't exceed audio duration, can't cross start handle
-        const clamped = Math.min(audioDuration, Math.max(snappedTime, (tempStartTimeRef.current ?? 0) + MIN_DUR));
-        setTempEndTime(clamped);
+        if (draggingHandleRef.current === 'start') {
+          const clamped = Math.max(0, Math.min(snappedTime, (tempEndTimeRef.current ?? 0) - MIN_DUR));
+          setTempStartTime(clamped);
+        } else {
+          const clamped = Math.min(audioDuration, Math.max(snappedTime, (tempStartTimeRef.current ?? 0) + MIN_DUR));
+          setTempEndTime(clamped);
+        }
+        return;
+      }
+
+      // ── Background drag (scrub through sentences with edge-scroll) ──
+      if (backgroundDraggingRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const percent = x / rect.width; // allow <0 and >1 for edge detection
+
+        if (percent > 1 - EDGE_ZONE) {
+          // Cursor at right edge → auto-advance forward
+          startEdgeScroll(1);
+        } else if (percent < EDGE_ZONE) {
+          // Cursor at left edge → auto-advance backward
+          startEdgeScroll(-1);
+        } else {
+          // Cursor within the visible range → stop edge-scroll, do normal scrub
+          stopEdgeScroll();
+          const clampedPercent = Math.max(0, Math.min(1, percent));
+          const hoverTime = viewStartTimeRef.current + (clampedPercent * viewDurationRef.current);
+          const idx = findSubtitleAtTime(hoverTime);
+          if (idx !== -1 && idx !== currentSentenceIndexRef.current) {
+            onNavigateToSentenceRef.current(idx);
+          }
+        }
       }
     };
 
     const onMouseUp = () => {
+      const wasDragging = draggingHandleRef.current && isTimingEditingRef.current;
+      // If mousedown happened on a handle but no drag occurred, clear the pending intent
+      pendingEditHandleRef.current = null;
       draggingHandleRef.current = null;
+      if (backgroundDraggingRef.current) {
+        stopEdgeScroll();
+      }
+      backgroundDraggingRef.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      // Only block click if a real DRAG happened (not just a click on the handle)
+      if (wasDragging) {
+        clickBlockedRef.current = true;
+        setTimeout(() => { clickBlockedRef.current = false; }, 50);
+      }
     };
 
     document.addEventListener('mousemove', onMouseMove);
@@ -212,6 +320,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     return () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+      stopEdgeScroll();
     };
   }, []); // empty deps — uses refs only
 
@@ -269,9 +378,31 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     return () => document.removeEventListener('keydown', onKeyDown, { capture: true });
   }, []); // empty deps — uses refs only
 
-  const handleDoubleClick = () => {
-    if (audioElement) audioElement.pause();
-    setIsTimingEditing(true);
+  // ─── Single click: select/navigate to clicked subtitle (NO play) ────────────────
+  const handleClick = (e: React.MouseEvent) => {
+    if (isTimingEditing) return;          // ignore clicks in edit mode
+    if (clickBlockedRef.current) return;  // ignore clicks that follow a drag
+    if (!containerRef.current) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percent = Math.max(0, Math.min(1, x / rect.width));
+    const clickTime = viewStartTime + (percent * viewDuration);
+    const clickedIdx = findSubtitleAtTime(clickTime);
+    if (clickedIdx !== -1) onNavigateToSentence(clickedIdx); // select only, no play
+  };
+
+  // ─── Double click: ALWAYS play the clicked subtitle ───────────────────────────
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    if (isTimingEditing) return;
+    if (!containerRef.current) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percent = Math.max(0, Math.min(1, x / rect.width));
+    const clickTime = viewStartTime + (percent * viewDuration);
+    const clickedIdx = findSubtitleAtTime(clickTime);
+    if (clickedIdx !== -1) onPlaySentence(clickedIdx);
   };
 
   const handleCancel = () => setIsTimingEditing(false);
@@ -282,18 +413,19 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     }
   };
 
-  // ─── mousedown on a handle: auto-enter edit mode and begin drag immediately ──
+  // ─── mousedown on a handle: mark as candidate for drag — DON'T enter edit yet ──
   const handleMouseDown = (e: React.MouseEvent, handle: 'start' | 'end') => {
     e.preventDefault();
-    e.stopPropagation(); // don't let it bubble to the double-click handler
+    e.stopPropagation(); // don't let click/dblclick bubble to background handlers
 
-    // Auto-enter timing edit mode if not already in it
-    if (!isTimingEditingRef.current) {
-      if (audioElementRef.current) audioElementRef.current.pause();
-      setIsTimingEditing(true);
-      isTimingEditingRef.current = true; // mirror immediately for drag to work
-    }
+    // Block the click event that will fire after this mousedown
+    // (so single click on a handle doesn't also play)
+    clickBlockedRef.current = true;
+    setTimeout(() => { clickBlockedRef.current = false; }, 50);
 
+    // Record drag intent but DON'T enter edit mode yet —
+    // edit mode activates lazily on first mousemove (see onMouseMove above)
+    pendingEditHandleRef.current = handle;
     draggingHandleRef.current = handle;
     document.body.style.cursor = 'ew-resize';
     document.body.style.userSelect = 'none';
@@ -313,9 +445,21 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     <div className='flex flex-col gap-2'>
       <div
         ref={containerRef}
-        className="relative w-full h-20 bg-secondary/30 rounded-lg flex items-end overflow-hidden"
+        className={cn(
+          "relative w-full h-20 bg-secondary/30 rounded-lg flex items-end overflow-hidden",
+          !isTimingEditing && "cursor-grab active:cursor-grabbing"
+        )}
+        onClick={handleClick}
         onDoubleClick={handleDoubleClick}
-        title={isTimingEditing ? undefined : "Double-click or drag the blue handles to edit timestamps"}
+        onMouseDown={(e) => {
+          // Start background drag only when NOT in timing edit mode
+          // Handle mousedowns are caught by stopPropagation, so this only fires for background
+          if (isTimingEditing) return;
+          if (draggingHandleRef.current) return;
+          backgroundDraggingRef.current = true;
+          document.body.style.userSelect = 'none';
+        }}
+        title={isTimingEditing ? undefined : "Click or double-click to play · Drag edge handles to adjust timing · Drag background to scrub"}
       >
         <div className="absolute inset-0 w-full h-full">
           <canvas
@@ -414,12 +558,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
         )}
       </div>
 
-      {/* Hint text */}
-      {!isTimingEditing && (
-        <p className="text-center text-[11px] text-muted-foreground/60 select-none">
-          Drag blue handles or double-click to edit timestamps
-        </p>
-      )}
+      {/* Hint text removed — waveform handles are self-evident */}
 
       {/* Edit mode controls */}
       {isTimingEditing && (

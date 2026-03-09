@@ -1,6 +1,6 @@
 """
-YouTube-to-SRT Backend Server
-Downloads YouTube audio, slices long audio at silence boundaries,
+LinguaPlayer Backend Server
+Downloads YouTube / podcast audio, slices long audio at silence boundaries,
 transcribes with Whisper (word-level), and returns SRT + audio.
 """
 
@@ -11,6 +11,7 @@ import base64
 import hashlib
 import tempfile
 import traceback
+import shutil
 from pathlib import Path
 
 # ── Directories ─────────────────────────────────────────────────────────
@@ -537,6 +538,172 @@ def process_youtube():
         return jsonify({"error": str(e)}), 500
 
 
+# ── Podcast helpers ─────────────────────────────────────────────────────
+
+def _is_direct_audio_url(url: str) -> bool:
+    """Check if the URL points directly to an audio file."""
+    from urllib.parse import urlparse
+    path = urlparse(url).path.lower()
+    # Strip query params — some CDN URLs have ?token=... after the extension
+    return any(path.endswith(ext) for ext in ('.mp3', '.m4a', '.ogg', '.wav', '.aac', '.opus', '.flac'))
+
+
+def download_podcast_audio(url: str, podcast_id: str) -> tuple[Path, str]:
+    """Download podcast audio into the persistent cache dir.
+    Returns (mp3_path, title).
+    If the file already exists, returns immediately (cache hit).
+    """
+    output_path = _mp3_path(podcast_id)
+    meta_file = _meta_path(podcast_id)
+
+    if output_path.exists():
+        print(f"  ✓ Podcast cache hit: {output_path.name}")
+        title = podcast_id
+        if meta_file.exists():
+            try:
+                title = json.loads(meta_file.read_text(encoding='utf-8')).get('title', podcast_id)
+            except Exception:
+                pass
+        return output_path, title
+
+    if _is_direct_audio_url(url):
+        # ── Strategy 1: Direct HTTP download ────────────────────────────
+        import requests as http_requests
+        from urllib.parse import urlparse, unquote
+
+        print(f"  ⬇ Direct download: {url}")
+        resp = http_requests.get(url, stream=True, timeout=120,
+                                 headers={'User-Agent': 'Mozilla/5.0'})
+        resp.raise_for_status()
+
+        # Determine a title from the filename in the URL
+        url_path = unquote(urlparse(url).path)
+        raw_name = os.path.splitext(os.path.basename(url_path))[0] or podcast_id
+        title = raw_name.replace('_', ' ').replace('-', ' ').strip()
+
+        ext = os.path.splitext(urlparse(url).path)[1].lower() or '.mp3'
+        tmp_raw = TEMP_DIR / f"{podcast_id}_raw{ext}"
+        with open(tmp_raw, 'wb') as f:
+            for chunk in resp.iter_content(chunk_size=1024 * 64):
+                f.write(chunk)
+
+        if ext == '.mp3':
+            shutil.move(str(tmp_raw), str(output_path))
+        else:
+            # Convert to MP3 via pydub
+            from pydub import AudioSegment
+            audio_seg = AudioSegment.from_file(str(tmp_raw))
+            audio_seg.export(str(output_path), format='mp3', bitrate='192k')
+            tmp_raw.unlink(missing_ok=True)
+    else:
+        # ── Strategy 2: yt-dlp (supports many podcast platforms) ────────
+        import yt_dlp
+        print(f"  ⬇ yt-dlp download: {url}")
+        tmp_output = TEMP_DIR / f"{podcast_id}.%(ext)s"
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': str(tmp_output),
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'quiet': True,
+            'no_warnings': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            title = info.get('title', podcast_id)
+
+        tmp_mp3 = TEMP_DIR / f"{podcast_id}.mp3"
+        if tmp_mp3.exists():
+            shutil.move(str(tmp_mp3), str(output_path))
+        else:
+            # yt-dlp may have saved with a different extension — find & convert
+            for f in TEMP_DIR.glob(f"{podcast_id}.*"):
+                if f.suffix.lower() in ('.mp3', '.m4a', '.webm', '.opus', '.ogg'):
+                    if f.suffix.lower() == '.mp3':
+                        shutil.move(str(f), str(output_path))
+                    else:
+                        from pydub import AudioSegment
+                        audio_seg = AudioSegment.from_file(str(f))
+                        audio_seg.export(str(output_path), format='mp3', bitrate='192k')
+                        f.unlink(missing_ok=True)
+                    break
+
+    if not output_path.exists():
+        raise RuntimeError(f"Failed to download audio from: {url}")
+
+    # Write sidecar metadata
+    meta = {'title': title, 'url': url, 'source': 'podcast'}
+    meta_file.write_text(json.dumps(meta, ensure_ascii=False), encoding='utf-8')
+
+    return output_path, title
+
+
+@app.route('/api/process-podcast', methods=['POST'])
+def process_podcast():
+    data = request.get_json()
+    url = data.get('url', '').strip()
+    model_name = data.get('model', 'base')
+
+    if not url:
+        return jsonify({'error': 'No URL provided'}), 400
+    if model_name not in ('base', 'small', 'medium'):
+        return jsonify({'error': 'Invalid model. Choose base, small, or medium.'}), 400
+
+    podcast_id = get_video_id(url)
+
+    try:
+        # 1. Download
+        cached = _mp3_path(podcast_id).exists()
+        print(f"[1/4] {'Cache hit — skipping download' if cached else 'Downloading podcast audio from'}: {url}")
+        mp3_path, title = download_podcast_audio(url, podcast_id)
+        safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:60]
+
+        # 2. Slice
+        print(f"[2/4] Slicing audio if needed ...")
+        chunks = slice_audio(mp3_path, podcast_id)
+        chunk_durations = get_chunk_durations(chunks) if len(chunks) > 1 else [0.0]
+        print(f"       → {len(chunks)} chunk(s)")
+
+        # 3. Transcribe
+        print(f"[3/4] Transcribing with Whisper ({model_name}) ...")
+        results = transcribe_chunks(chunks, podcast_id, model_name)
+
+        # 4. Merge & build SRT
+        print(f"[4/4] Building SRT ...")
+        if len(chunks) == 1:
+            chunk_durations = [0.0]
+        sentences = merge_and_build_sentences(results, chunk_durations)
+        srt_content = sentences_to_srt(sentences)
+
+        # 4b. Volume-refined SRT
+        print(f"[4b/4] Refining end-times by silence ...")
+        sentences_adjusted = refine_end_times_by_silence(sentences, mp3_path)
+        srt_content_adjusted = sentences_to_srt(sentences_adjusted)
+
+        # Read the full MP3 for the frontend
+        with open(mp3_path, 'rb') as f:
+            audio_b64 = base64.b64encode(f.read()).decode('ascii')
+
+        cleanup_temp_files(podcast_id)
+
+        print(f"✅ Done! {len(sentences)} sentences generated.")
+
+        return jsonify({
+            'audio_base64': audio_b64,
+            'audio_filename': f"{safe_title or podcast_id}.mp3",
+            'srt_content': srt_content,
+            'srt_content_adjusted': srt_content_adjusted,
+            'sentence_count': len(sentences),
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route("/api/transcribe-upload", methods=["POST", "OPTIONS"])
 def transcribe_upload():
     if request.method == "OPTIONS":
@@ -802,7 +969,7 @@ def export_sentence_mp3():
 
 
 if __name__ == "__main__":
-    print("🎵 LinguaPlayer Backend — YouTube to SRT + MP3 Upload")
+    print("🎵 LinguaPlayer Backend — YouTube / Podcast to SRT + MP3 Upload")
     print(f"   MP3 cache  : {MP3_CACHE_DIR}")
     print(f"   Temp dir   : {TEMP_DIR}")
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
