@@ -477,6 +477,7 @@ def process_youtube():
     data = request.get_json()
     url = data.get("url", "").strip()
     model_name = data.get("model", "base")
+    enable_volume = data.get("enable_volume_adjustment", True)
 
     if not url:
         return jsonify({"error": "No URL provided"}), 400
@@ -512,9 +513,13 @@ def process_youtube():
         srt_content = sentences_to_srt(sentences)
 
         # 4b. Volume-refined SRT
-        print(f"[4b/4] Refining end-times by silence ...")
-        sentences_adjusted = refine_end_times_by_silence(sentences, mp3_path)
-        srt_content_adjusted = sentences_to_srt(sentences_adjusted)
+        if enable_volume:
+            print(f"[4b/4] Refining end-times by silence ...")
+            sentences_adjusted = refine_end_times_by_silence(sentences, mp3_path)
+            srt_content_adjusted = sentences_to_srt(sentences_adjusted)
+        else:
+            print(f"[4b/4] Skipping volume refinement ...")
+            srt_content_adjusted = ""
 
         # Read the full MP3 for the frontend
         with open(mp3_path, "rb") as f:
@@ -523,7 +528,7 @@ def process_youtube():
         # Cleanup temp chunk / recovery files (MP3 in mp3_cache/ is kept)
         cleanup_temp_files(video_id)
 
-        print(f"\u2705 Done! {len(sentences)} sentences generated.")
+        print(f"Done! {len(sentences)} sentences generated.")
 
         return jsonify({
             "audio_base64": audio_b64,
@@ -646,6 +651,7 @@ def process_podcast():
     data = request.get_json()
     url = data.get('url', '').strip()
     model_name = data.get('model', 'base')
+    enable_volume = data.get("enable_volume_adjustment", True)
 
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
@@ -679,9 +685,13 @@ def process_podcast():
         srt_content = sentences_to_srt(sentences)
 
         # 4b. Volume-refined SRT
-        print(f"[4b/4] Refining end-times by silence ...")
-        sentences_adjusted = refine_end_times_by_silence(sentences, mp3_path)
-        srt_content_adjusted = sentences_to_srt(sentences_adjusted)
+        if enable_volume:
+            print(f"[4b/4] Refining end-times by silence ...")
+            sentences_adjusted = refine_end_times_by_silence(sentences, mp3_path)
+            srt_content_adjusted = sentences_to_srt(sentences_adjusted)
+        else:
+            print(f"[4b/4] Skipping volume refinement ...")
+            srt_content_adjusted = ""
 
         # Read the full MP3 for the frontend
         with open(mp3_path, 'rb') as f:
@@ -689,7 +699,7 @@ def process_podcast():
 
         cleanup_temp_files(podcast_id)
 
-        print(f"✅ Done! {len(sentences)} sentences generated.")
+        print(f"Done! {len(sentences)} sentences generated.")
 
         return jsonify({
             'audio_base64': audio_b64,
@@ -714,6 +724,8 @@ def transcribe_upload():
 
     audio_file = request.files["file"]
     model_name = request.form.get("model", "base")
+    enable_volume_str = request.form.get("enable_volume_adjustment", "true").lower()
+    enable_volume = enable_volume_str == "true"
 
     if model_name not in ("base", "small", "medium"):
         return jsonify({"error": "Invalid model. Choose base, small, or medium."}), 400
@@ -752,9 +764,13 @@ def transcribe_upload():
         srt_content = sentences_to_srt(sentences)
 
         # Volume-refined SRT
-        print(f"[3b/3] Refining end-times by silence …")
-        sentences_adjusted = refine_end_times_by_silence(sentences, mp3_path)
-        srt_content_adjusted = sentences_to_srt(sentences_adjusted)
+        if enable_volume:
+            print(f"[3b/3] Refining end-times by silence …")
+            sentences_adjusted = refine_end_times_by_silence(sentences, mp3_path)
+            srt_content_adjusted = sentences_to_srt(sentences_adjusted)
+        else:
+            print(f"[3b/3] Skipping volume refinement …")
+            srt_content_adjusted = ""
 
         # Return the original MP3 as base64
         with open(mp3_path, "rb") as f:

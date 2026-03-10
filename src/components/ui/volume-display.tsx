@@ -11,6 +11,7 @@ interface VolumeDisplayProps {
   currentSentenceIndex: number;
   audioElement: HTMLAudioElement | null;
   audioFile: File | null;
+  showWaveform: boolean;
   isTimingEditing: boolean;
   setIsTimingEditing: (isEditing: boolean) => void;
   onSave: (newStartTime: number, newEndTime: number) => void;
@@ -79,8 +80,9 @@ const formatTime = (seconds: number): string => {
   return `${m}:${s}`;
 };
 
-export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, audioFile, isTimingEditing, setIsTimingEditing, onSave, onPlaySentence, onNavigateToSentence }: VolumeDisplayProps) {
+export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, audioFile, showWaveform, isTimingEditing, setIsTimingEditing, onSave, onPlaySentence, onNavigateToSentence }: VolumeDisplayProps) {
   const [waveformBuffer, setWaveformBuffer] = useState<AudioBuffer | null>(null);
+  const [panTick, setPanTick] = useState(0); // incremented by RAF to force re-renders during pan
   const containerRef = useRef<HTMLDivElement>(null);
   const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
   const [themePrimaryColor, setThemePrimaryColor] = useState('hsl(208 26% 64%)');
@@ -104,13 +106,18 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
   const onPlaySentenceRef = useRef(onPlaySentence);
   const onNavigateToSentenceRef = useRef(onNavigateToSentence);
   const backgroundDraggingRef = useRef(false);
-  const edgeScrollIntervalRef = useRef<number | null>(null);
-  const edgeScrollDirRef = useRef<-1 | 0 | 1>(0);
-  const edgeScrollSpeedRef = useRef(250); // ms between auto-steps, decreases over time
   // Blocks the click handler from firing after a drag or handle-mousedown
   const clickBlockedRef = useRef(false);
   // Tracks a handle mousedown that hasn't started dragging yet (pending intent)
   const pendingEditHandleRef = useRef<'start' | 'end' | null>(null);
+  // Continuous pan-drag state
+  const dragRafRef = useRef<number | null>(null);
+  const lastDragXRef = useRef<number>(0);
+  const dragStartXRef = useRef<number>(0);
+  const panViewStartRef = useRef<number | null>(null); // null = not panning
+  const startDragRafRef = useRef<(() => void) | null>(null); // set by useEffect, called by onMouseDown
+  // Stable view duration (computed once per render, used during pan)
+  const stableViewDurationRef = useRef<number>(1);
 
   // Keep refs in sync
   useEffect(() => { tempStartTimeRef.current = tempStartTime; }, [tempStartTime]);
@@ -126,21 +133,36 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
 
   const sentencesInView = 5;
 
-  // Determine the view window
-  let startIdx = Math.max(0, currentSentenceIndex - 1); // current subtitle in 2nd row
+  // Determine the subtitle-centered view window
+  let startIdx = Math.max(0, currentSentenceIndex - 1);
   let endIdx = Math.min(subtitles.length - 1, startIdx + sentencesInView - 1);
 
   if (endIdx - startIdx + 1 < sentencesInView && subtitles.length >= sentencesInView) {
     startIdx = Math.max(0, endIdx - sentencesInView + 1);
   }
 
-  const viewStartTime = subtitles[startIdx]?.startTime ?? 0;
-  const viewEndTime = subtitles[endIdx]?.endTime ?? (audioElement?.duration || 1);
-  const viewDuration = viewEndTime - viewStartTime;
+  const subViewStartTime = subtitles[startIdx]?.startTime ?? 0;
+  const subViewEndTime = subtitles[endIdx]?.endTime ?? (audioElement?.duration || 1);
+  const subViewDuration = subViewEndTime - subViewStartTime;
 
-  // Keep view refs in sync
-  useEffect(() => { viewStartTimeRef.current = viewStartTime; }, [viewStartTime]);
-  useEffect(() => { viewDurationRef.current = viewDuration; }, [viewDuration]);
+  // While panning, override the view with the pan position
+  const isPanning = panViewStartRef.current !== null;
+  const viewStartTime = isPanning ? panViewStartRef.current! : subViewStartTime;
+  const viewDuration = isPanning ? stableViewDurationRef.current : subViewDuration;
+  const viewEndTime = viewStartTime + viewDuration;
+
+  // Keep stable duration up to date when NOT panning
+  if (!isPanning) stableViewDurationRef.current = subViewDuration;
+
+  // Keep view refs in sync (during pan these are updated directly by the RAF loop)
+  // Only sync subtitle-based values when NOT panning
+  useEffect(() => {
+    if (panViewStartRef.current === null) {
+      viewStartTimeRef.current = subViewStartTime;
+      viewDurationRef.current = subViewDuration;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subViewStartTime, subViewDuration]);
 
   // Clamp to [startTime, endTime] so the red line never overshoots the blue end handle.
   const rawCurrentTime = audioElement?.currentTime ?? 0;
@@ -163,7 +185,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
       setThemePrimaryColor(`hsl(${hslValues[0]} ${hslValues[1]}% ${hslValues[2]}%)`);
     }
 
-    if (audioFile && !waveformBuffer) {
+    if (audioFile && !waveformBuffer && showWaveform) {
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -175,20 +197,28 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
       };
       reader.readAsArrayBuffer(audioFile);
     }
-  }, [audioFile, waveformBuffer]);
+  }, [audioFile, waveformBuffer, showWaveform]);
 
   useEffect(() => {
     const canvas = waveformCanvasRef.current;
-    if (canvas && waveformBuffer && viewDuration > 0) {
+    if (canvas) {
       const redraw = () => {
-        drawWaveform(canvas, waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime);
+        if (showWaveform && waveformBuffer && viewDuration > 0) {
+          drawWaveform(canvas, waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime);
+        } else {
+          // Clear canvas when not showing waveform
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
+        }
       };
       const resizeObserver = new ResizeObserver(redraw);
       resizeObserver.observe(canvas);
       redraw();
       return () => resizeObserver.disconnect();
     }
-  }, [waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime, viewDuration]);
+  }, [waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime, viewDuration, showWaveform]);
 
   // ─── Helper: find which subtitle index a given time falls into ───────────────
   const findSubtitleAtTime = (time: number): number => {
@@ -206,48 +236,47 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     return closest;
   };
 
-  // ─── Edge-scroll helper: start/stop auto-advance at edges ───────────────────
-  const startEdgeScroll = (dir: -1 | 1) => {
-    if (edgeScrollDirRef.current === dir && edgeScrollIntervalRef.current) return; // already scrolling this direction
-    stopEdgeScroll();
-    edgeScrollDirRef.current = dir;
-    edgeScrollSpeedRef.current = 250; // start slow
-
-    const step = () => {
-      const cur = currentSentenceIndexRef.current;
-      const next = cur + dir;
-      if (next >= 0 && next < subtitlesRef.current.length) {
-        onNavigateToSentenceRef.current(next);
-      }
-      // Accelerate: reduce interval (min 100ms)
-      edgeScrollSpeedRef.current = Math.max(100, edgeScrollSpeedRef.current - 20);
-      // Re-schedule with new speed
-      edgeScrollIntervalRef.current = window.setTimeout(step, edgeScrollSpeedRef.current);
-    };
-
-    // First step fires immediately
-    step();
-  };
-
-  const stopEdgeScroll = () => {
-    if (edgeScrollIntervalRef.current) {
-      clearTimeout(edgeScrollIntervalRef.current);
-      edgeScrollIntervalRef.current = null;
-    }
-    edgeScrollDirRef.current = 0;
-    edgeScrollSpeedRef.current = 250;
-  };
+  // (edge-scroll removed — pan is now continuous; no discrete edge-stepping needed)
 
   // ─── Mouse drag listeners (attached once, uses refs) ────────────────────────
   useEffect(() => {
-    const EDGE_ZONE = 0.10; // 10% from each edge triggers auto-scroll
+    // Continuous-pan RAF loop: slides the view left/right with mouse delta
+    const rafPan = () => {
+      if (!backgroundDraggingRef.current || !containerRef.current) return;
+
+      const rect = containerRef.current.getBoundingClientRect();
+      const deltaX = lastDragXRef.current - dragStartXRef.current; // pixels moved since mousedown
+      const viewDur = viewDurationRef.current;
+      // pixels→time: dragging one full canvas width pans by viewDuration
+      const timeDelta = -(deltaX / rect.width) * viewDur;
+      const audioDuration = audioElementRef.current?.duration ?? viewDur;
+
+      // Compute new view start: pan delta added to the baseline captured at mousedown
+      const baseStart = (window as any).__dragBaseViewStart as number ?? viewStartTimeRef.current;
+      const newStart = Math.max(0, Math.min(baseStart + timeDelta, audioDuration - viewDur));
+
+      // Update refs so the NEXT render picks up the new view window
+      panViewStartRef.current = newStart;
+      viewStartTimeRef.current = newStart;
+      // viewDurationRef stays unchanged
+
+      // Force a re-render so the canvas redraws
+      setPanTick(t => t + 1);
+
+      dragRafRef.current = requestAnimationFrame(rafPan);
+    };
+
+    // Expose starter to onMouseDown
+    startDragRafRef.current = () => {
+      if (dragRafRef.current !== null) cancelAnimationFrame(dragRafRef.current);
+      dragRafRef.current = requestAnimationFrame(rafPan);
+    };
 
     const onMouseMove = (e: MouseEvent) => {
       if (!containerRef.current) return;
 
       // ── Handle drag (adjusting timestamp handles) ──
       if (draggingHandleRef.current) {
-        // Enter edit mode lazily on first actual movement (not on mousedown)
         if (!isTimingEditingRef.current) {
           if (audioElementRef.current) audioElementRef.current.pause();
           setIsTimingEditingRef.current(true);
@@ -258,57 +287,48 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
         const percent = Math.max(0, Math.min(1, x / rect.width));
         const newTime = viewStartTimeRef.current + (percent * viewDurationRef.current);
         const snappedTime = Math.round(newTime * 20) / 20;
-
         const audioDuration = audioElementRef.current?.duration ?? Infinity;
         const MIN_DUR = 0.1;
-
         if (draggingHandleRef.current === 'start') {
-          const clamped = Math.max(0, Math.min(snappedTime, (tempEndTimeRef.current ?? 0) - MIN_DUR));
-          setTempStartTime(clamped);
+          setTempStartTime(Math.max(0, Math.min(snappedTime, (tempEndTimeRef.current ?? 0) - MIN_DUR)));
         } else {
-          const clamped = Math.min(audioDuration, Math.max(snappedTime, (tempStartTimeRef.current ?? 0) + MIN_DUR));
-          setTempEndTime(clamped);
+          setTempEndTime(Math.min(audioDuration, Math.max(snappedTime, (tempStartTimeRef.current ?? 0) + MIN_DUR)));
         }
         return;
       }
 
-      // ── Background drag (scrub through sentences with edge-scroll) ──
+      // ── Background drag: track current mouse X (RAF loop does the panning) ──
       if (backgroundDraggingRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const percent = x / rect.width; // allow <0 and >1 for edge detection
-
-        if (percent > 1 - EDGE_ZONE) {
-          // Cursor at right edge → auto-advance forward
-          startEdgeScroll(1);
-        } else if (percent < EDGE_ZONE) {
-          // Cursor at left edge → auto-advance backward
-          startEdgeScroll(-1);
-        } else {
-          // Cursor within the visible range → stop edge-scroll, do normal scrub
-          stopEdgeScroll();
-          const clampedPercent = Math.max(0, Math.min(1, percent));
-          const hoverTime = viewStartTimeRef.current + (clampedPercent * viewDurationRef.current);
-          const idx = findSubtitleAtTime(hoverTime);
-          if (idx !== -1 && idx !== currentSentenceIndexRef.current) {
-            onNavigateToSentenceRef.current(idx);
-          }
-        }
+        lastDragXRef.current = e.clientX;
       }
     };
 
     const onMouseUp = () => {
       const wasDragging = draggingHandleRef.current && isTimingEditingRef.current;
-      // If mousedown happened on a handle but no drag occurred, clear the pending intent
       pendingEditHandleRef.current = null;
       draggingHandleRef.current = null;
+
       if (backgroundDraggingRef.current) {
-        stopEdgeScroll();
+        // Cancel RAF
+        if (dragRafRef.current !== null) {
+          cancelAnimationFrame(dragRafRef.current);
+          dragRafRef.current = null;
+        }
+        // Snap to the subtitle at the center of the final pan position
+        if (panViewStartRef.current !== null) {
+          const centerTime = panViewStartRef.current + viewDurationRef.current / 2;
+          const idx = findSubtitleAtTime(centerTime);
+          if (idx !== -1) onNavigateToSentenceRef.current(idx);
+        }
+        // Clear pan override — subtitle-centered view takes over again
+        panViewStartRef.current = null;
+        delete (window as any).__dragBaseViewStart;
       }
+
       backgroundDraggingRef.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      // Only block click if a real DRAG happened (not just a click on the handle)
+
       if (wasDragging) {
         clickBlockedRef.current = true;
         setTimeout(() => { clickBlockedRef.current = false; }, 50);
@@ -320,7 +340,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     return () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
-      stopEdgeScroll();
+      if (dragRafRef.current !== null) cancelAnimationFrame(dragRafRef.current);
     };
   }, []); // empty deps — uses refs only
 
@@ -452,12 +472,20 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onMouseDown={(e) => {
-          // Start background drag only when NOT in timing edit mode
-          // Handle mousedowns are caught by stopPropagation, so this only fires for background
           if (isTimingEditing) return;
           if (draggingHandleRef.current) return;
+          // Capture the drag baseline: where in time does the left edge sit right now?
+          const baseStart = viewStartTimeRef.current;
+          (window as any).__dragBaseViewStart = baseStart;
+          dragStartXRef.current = e.clientX;
+          lastDragXRef.current = e.clientX;
+          // Set pan to current position (non-null = panning mode)
+          panViewStartRef.current = baseStart;
           backgroundDraggingRef.current = true;
           document.body.style.userSelect = 'none';
+          document.body.style.cursor = 'grabbing';
+          // Kick off the RAF pan loop
+          startDragRafRef.current?.();
         }}
         title={isTimingEditing ? undefined : "Click or double-click to play · Drag edge handles to adjust timing · Drag background to scrub"}
       >
