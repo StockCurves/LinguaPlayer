@@ -528,7 +528,7 @@ def process_youtube():
         # Cleanup temp chunk / recovery files (MP3 in mp3_cache/ is kept)
         cleanup_temp_files(video_id)
 
-        print(f"Done! {len(sentences)} sentences generated.")
+        print(f"\u2705 Done! {len(sentences)} sentences generated.")
 
         return jsonify({
             "audio_base64": audio_b64,
@@ -699,7 +699,7 @@ def process_podcast():
 
         cleanup_temp_files(podcast_id)
 
-        print(f"Done! {len(sentences)} sentences generated.")
+        print(f"✅ Done! {len(sentences)} sentences generated.")
 
         return jsonify({
             'audio_base64': audio_b64,

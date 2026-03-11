@@ -57,21 +57,7 @@ export function PlayerView({
   const [editingText, setEditingText] = useState('');
   const [isTimingEditing, setIsTimingEditing] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
-  const [showWaveform, setShowWaveform] = useState(false);
   const [undoStack, setUndoStack] = useState<Subtitle[][]>([]);
-
-  // Load saved preference
-  useEffect(() => {
-    const saved = localStorage.getItem('lingua_show_waveform');
-    if (saved !== null) {
-      setShowWaveform(saved === 'true');
-    }
-  }, []);
-
-  // Save preference whenever it changes
-  useEffect(() => {
-    localStorage.setItem('lingua_show_waveform', String(showWaveform));
-  }, [showWaveform]);
 
   // ── Jump-to-subtitle input state ──────────────────────────────────────
   const [isJumpInputVisible, setIsJumpInputVisible] = useState(false);
@@ -689,13 +675,48 @@ export function PlayerView({
           currentSentenceIndex={currentSentenceIndex}
           audioElement={audioRef.current}
           audioFile={audioFile}
-          showWaveform={showWaveform}
           isTimingEditing={isTimingEditing}
           setIsTimingEditing={setIsTimingEditing}
           onSave={handleTimingSave}
           onPlaySentence={playSentence}
           onNavigateToSentence={setCurrentSentenceIndex}
         />
+
+        {/* ── SRT Mode Toggle (hideable) ────────────────────────────────── */}
+        {showControls && srtContentAdjusted && !isTimingEditing && (
+          <div className="flex items-center justify-center">
+            <div className="flex items-center gap-px bg-muted/50 rounded-md p-px border text-[10px]">
+              <button
+                id="srt-mode-original"
+                onClick={() => onSrtModeChange?.('original')}
+                className={cn(
+                  "px-2 py-0.5 rounded font-medium transition-all duration-200",
+                  activeSrtMode === 'original'
+                    ? 'bg-background shadow-sm text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                Original
+              </button>
+              <button
+                id="srt-mode-adjusted"
+                onClick={() => onSrtModeChange?.('adjusted')}
+                className={cn(
+                  "px-2 py-0.5 rounded font-medium transition-all duration-200 flex items-center gap-1",
+                  activeSrtMode === 'adjusted'
+                    ? 'bg-emerald-500/10 shadow-sm text-emerald-600 dark:text-emerald-400'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <span className={cn(
+                  "w-1 h-1 rounded-full transition-colors",
+                  activeSrtMode === 'adjusted' ? 'bg-emerald-500' : 'bg-muted-foreground/40'
+                )} />
+                Vol-Adjusted
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── Playback buttons (hideable) ─────────────────────────────────── */}
         {showControls && !isTimingEditing && (
@@ -961,21 +982,6 @@ export function PlayerView({
                 </Button>
               </>
             )}
-
-            <div className="flex items-center space-x-1.5 ml-2 border-l pl-3 bg-muted/30 rounded-r-md">
-              <Switch
-                id="vol-adjusted"
-                checked={activeSrtMode === 'adjusted'}
-                onCheckedChange={(checked) => onSrtModeChange?.(checked ? 'adjusted' : 'original')}
-                disabled={!srtContentAdjusted}
-              />
-              <Label htmlFor="vol-adjusted" className="text-xs">Adjust Timestamps</Label>
-            </div>
-
-            <div className="flex items-center space-x-1.5 ml-2">
-              <Switch id="show-waveform" checked={showWaveform} onCheckedChange={setShowWaveform} />
-              <Label htmlFor="show-waveform" className="text-xs">Show Waveform</Label>
-            </div>
           </div>
 
           {/* Download buttons */}

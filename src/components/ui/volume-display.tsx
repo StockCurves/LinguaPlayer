@@ -11,7 +11,6 @@ interface VolumeDisplayProps {
   currentSentenceIndex: number;
   audioElement: HTMLAudioElement | null;
   audioFile: File | null;
-  showWaveform: boolean;
   isTimingEditing: boolean;
   setIsTimingEditing: (isEditing: boolean) => void;
   onSave: (newStartTime: number, newEndTime: number) => void;
@@ -80,7 +79,7 @@ const formatTime = (seconds: number): string => {
   return `${m}:${s}`;
 };
 
-export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, audioFile, showWaveform, isTimingEditing, setIsTimingEditing, onSave, onPlaySentence, onNavigateToSentence }: VolumeDisplayProps) {
+export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, audioFile, isTimingEditing, setIsTimingEditing, onSave, onPlaySentence, onNavigateToSentence }: VolumeDisplayProps) {
   const [waveformBuffer, setWaveformBuffer] = useState<AudioBuffer | null>(null);
   const [panTick, setPanTick] = useState(0); // incremented by RAF to force re-renders during pan
   const containerRef = useRef<HTMLDivElement>(null);
@@ -185,7 +184,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
       setThemePrimaryColor(`hsl(${hslValues[0]} ${hslValues[1]}% ${hslValues[2]}%)`);
     }
 
-    if (audioFile && !waveformBuffer && showWaveform) {
+    if (audioFile && !waveformBuffer) {
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -197,28 +196,20 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
       };
       reader.readAsArrayBuffer(audioFile);
     }
-  }, [audioFile, waveformBuffer, showWaveform]);
+  }, [audioFile, waveformBuffer]);
 
   useEffect(() => {
     const canvas = waveformCanvasRef.current;
-    if (canvas) {
+    if (canvas && waveformBuffer && viewDuration > 0) {
       const redraw = () => {
-        if (showWaveform && waveformBuffer && viewDuration > 0) {
-          drawWaveform(canvas, waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime);
-        } else {
-          // Clear canvas when not showing waveform
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-          }
-        }
+        drawWaveform(canvas, waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime);
       };
       const resizeObserver = new ResizeObserver(redraw);
       resizeObserver.observe(canvas);
       redraw();
       return () => resizeObserver.disconnect();
     }
-  }, [waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime, viewDuration, showWaveform]);
+  }, [waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime, viewDuration]);
 
   // ─── Helper: find which subtitle index a given time falls into ───────────────
   const findSubtitleAtTime = (time: number): number => {

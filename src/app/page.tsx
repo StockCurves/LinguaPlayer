@@ -9,6 +9,8 @@ import { UploadCloud, FileAudio, FileText, CheckCircle2, Coffee, Loader2, Wand2,
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { PlayerView } from '@/components/player/PlayerView';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 
 export type Subtitle = {
   id: number;
@@ -36,6 +38,7 @@ export default function LinguaPlayerPage() {
   // URL processing state (YouTube or podcast)
   const [mediaUrl, setMediaUrl] = useState('');
   const [whisperModel, setWhisperModel] = useState('base');
+  const [enableVolumeAdjustment, setEnableVolumeAdjustment] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
 
@@ -220,6 +223,7 @@ export default function LinguaPlayerPage() {
       const formData = new FormData();
       formData.append("file", audioFile);
       formData.append("model", whisperModel);
+      formData.append("enable_volume_adjustment", String(enableVolumeAdjustment));
 
       const res = await fetch(`${BACKEND_URL}/api/transcribe-upload`, {
         method: "POST",
@@ -279,7 +283,7 @@ export default function LinguaPlayerPage() {
       const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, model: whisperModel }),
+        body: JSON.stringify({ url, model: whisperModel, enable_volume_adjustment: enableVolumeAdjustment }),
       });
 
       if (!res.ok) {
@@ -328,6 +332,7 @@ export default function LinguaPlayerPage() {
     // Only act when we have both files and no adjusted SRT yet
     if (!audioFile || !srtContent || !srtFile) return;  // srtFile present = manual upload
     if (srtContentAdjusted) return;                     // already done
+    if (!enableVolumeAdjustment) return;                // user opted out
 
     const key = `${audioFile.name}::${srtFile.name}`;
     if (lastRefinedKeyRef.current === key) return;      // same pair, don't re-call
@@ -352,7 +357,7 @@ export default function LinguaPlayerPage() {
 
     refine();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioFile, srtFile, srtContent]);
+  }, [audioFile, srtFile, srtContent, enableVolumeAdjustment]);
 
   const playSentence = (index: number) => {
     const audio = audioRef.current;
@@ -526,6 +531,10 @@ export default function LinguaPlayerPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Switch id="yt-volume-adj" checked={enableVolumeAdjustment} onCheckedChange={setEnableVolumeAdjustment} disabled={isProcessing} />
+                  <Label htmlFor="yt-volume-adj" className="text-sm cursor-pointer text-foreground font-medium">Generate volume-adjusted subtitles (slower)</Label>
+                </div>
                 <Button
                   onClick={handleProcessUrl}
                   disabled={isProcessing || !mediaUrl.trim()}
@@ -595,6 +604,10 @@ export default function LinguaPlayerPage() {
                         </>
                       )}
                     </Button>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Switch id="upload-volume-adj" checked={enableVolumeAdjustment} onCheckedChange={setEnableVolumeAdjustment} disabled={isProcessing} />
+                    <Label htmlFor="upload-volume-adj" className="text-sm cursor-pointer text-foreground font-medium">Generate volume-adjusted subtitles (slower)</Label>
                   </div>
                 </div>
               )}
