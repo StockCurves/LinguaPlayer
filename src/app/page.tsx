@@ -29,6 +29,7 @@ export default function LinguaPlayerPage() {
   const [srtContentAdjusted, setSrtContentAdjusted] = useState<string>("");
   const [activeSrtMode, setActiveSrtMode] = useState<'original' | 'adjusted'>('original');
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [waveformPeaks, setWaveformPeaks] = useState<number[] | null>(null);
   const [subtitles, setSubtitles] = useState<Subtitle[]>([]);
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(-1);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -38,9 +39,10 @@ export default function LinguaPlayerPage() {
   // URL processing state (YouTube or podcast)
   const [mediaUrl, setMediaUrl] = useState('');
   const [whisperModel, setWhisperModel] = useState('base');
-  const [enableVolumeAdjustment, setEnableVolumeAdjustment] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
+  const [isGeneratingAdjustedSrt, setIsGeneratingAdjustedSrt] = useState(false);
+  const [isExtractingWaveform, setIsExtractingWaveform] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const mainContainerRef = useRef<HTMLDivElement>(null);
@@ -172,9 +174,34 @@ export default function LinguaPlayerPage() {
       }
       setAudioFile(file);
       setAudioUrl(URL.createObjectURL(file));
+      setWaveformPeaks(null);             // reset on new audio
       setSrtContentAdjusted('');          // reset so refinement re-runs for new pair
       lastRefinedKeyRef.current = '';
       setActiveSrtMode('original');       // always start in original mode on new upload
+      
+      setIsExtractingWaveform(true);
+      const formData = new FormData();
+      formData.append("file", file);
+      fetch(`${BACKEND_URL}/api/extract-peaks`, {
+        method: "POST",
+        body: formData,
+      })
+        .then(res => {
+          if (!res.ok) throw new Error(`Server returned ${res.status}`);
+          return res.json();
+        })
+        .then(data => { 
+          if (data?.waveform_peaks) setWaveformPeaks(data.waveform_peaks); 
+        })
+        .catch(e => {
+          console.error("Failed to extract peaks:", e);
+          toast({
+            title: "Peak Extraction Failed",
+            description: "Falling back to slow client-side decoding.",
+            variant: "destructive"
+          });
+        })
+        .finally(() => setIsExtractingWaveform(false));
     } else if (type === 'srt') {
       if (!file.name.endsWith('.srt')) {
         toast({ variant: "destructive", title: "Invalid File", description: "Please upload a .srt file." });
@@ -223,7 +250,7 @@ export default function LinguaPlayerPage() {
       const formData = new FormData();
       formData.append("file", audioFile);
       formData.append("model", whisperModel);
-      formData.append("enable_volume_adjustment", String(enableVolumeAdjustment));
+      formData.append("enable_volume_adjustment", "false");
 
       const res = await fetch(`${BACKEND_URL}/api/transcribe-upload`, {
         method: "POST",
@@ -242,6 +269,7 @@ export default function LinguaPlayerPage() {
       // (srtFile stays null; PlayerView handles null gracefully)
       parseSrt(data.srt_content);
       if (data.srt_content_adjusted) setSrtContentAdjusted(data.srt_content_adjusted);
+      if (data.waveform_peaks) setWaveformPeaks(data.waveform_peaks);
 
       toast({
         title: "Transcription Complete!",
@@ -283,7 +311,7 @@ export default function LinguaPlayerPage() {
       const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, model: whisperModel, enable_volume_adjustment: enableVolumeAdjustment }),
+        body: JSON.stringify({ url, model: whisperModel, enable_volume_adjustment: false }),
       });
 
       if (!res.ok) {
@@ -309,6 +337,7 @@ export default function LinguaPlayerPage() {
       setSrtFile(generatedSrtFile);
       parseSrt(data.srt_content);
       if (data.srt_content_adjusted) setSrtContentAdjusted(data.srt_content_adjusted);
+      if (data.waveform_peaks) setWaveformPeaks(data.waveform_peaks);
 
       toast({
         title: "Processing Complete!",
@@ -327,37 +356,44 @@ export default function LinguaPlayerPage() {
     }
   };
 
-  // ── Auto-refine on manual MP3 + SRT upload ──────────────────────────
-  useEffect(() => {
-    // Only act when we have both files and no adjusted SRT yet
-    if (!audioFile || !srtContent || !srtFile) return;  // srtFile present = manual upload
-    if (srtContentAdjusted) return;                     // already done
-    if (!enableVolumeAdjustment) return;                // user opted out
+  // ── Manual generation of volume-adjusted SRT ───────────────────────
+  const handleGenerateAdjustedSrt = async () => {
+    if (!audioFile || !srtContent) return;
 
-    const key = `${audioFile.name}::${srtFile.name}`;
-    if (lastRefinedKeyRef.current === key) return;      // same pair, don't re-call
-    lastRefinedKeyRef.current = key;
+    setIsGeneratingAdjustedSrt(true);
+    try {
+      const form = new FormData();
+      form.append('file', audioFile);
+      form.append('srt_content', srtContent);
+      const res = await fetch(`${BACKEND_URL}/api/refine-srt`, {
+        method: 'POST',
+        body: form,
+      });
 
-    const refine = async () => {
-      try {
-        const form = new FormData();
-        form.append('file', audioFile);
-        form.append('srt_content', srtContent);
-        const res = await fetch(`${BACKEND_URL}/api/refine-srt`, {
-          method: 'POST',
-          body: form,
-        });
-        if (!res.ok) return; // silently fail — adjusted SRT is optional
-        const data = await res.json();
-        if (data.srt_content_adjusted) setSrtContentAdjusted(data.srt_content_adjusted);
-      } catch {
-        // Non-critical: if the backend can't be reached, just skip the adjusted SRT
+      if (!res.ok) {
+        throw new Error("Failed to generate adjusted subtitles");
       }
-    };
 
-    refine();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioFile, srtFile, srtContent, enableVolumeAdjustment]);
+      const data = await res.json();
+      if (data.srt_content_adjusted) {
+        setSrtContentAdjusted(data.srt_content_adjusted);
+        handleSrtModeChange('adjusted');
+        toast({
+          title: "Generation Complete",
+          description: "Volume-adjusted subtitles are now active.",
+        });
+      }
+    } catch (error) {
+      console.error("Failed to generate adjusted SRT:", error);
+      toast({
+        variant: "destructive",
+        title: "Generation Failed",
+        description: error instanceof Error ? error.message : "An unknown error occurred.",
+      });
+    } finally {
+      setIsGeneratingAdjustedSrt(false);
+    }
+  };
 
   const playSentence = (index: number) => {
     const audio = audioRef.current;
@@ -426,8 +462,14 @@ export default function LinguaPlayerPage() {
       >
         {file ? (
           <div className="flex flex-col items-center gap-2 py-2 text-green-600 dark:text-green-400">
-            <CheckCircle2 className="w-8 h-8" />
-            <span className="font-medium text-xs text-center break-all line-clamp-2">{file.name}</span>
+            {type === 'audio' && isExtractingWaveform ? (
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            ) : (
+              <CheckCircle2 className="w-8 h-8" />
+            )}
+            <span className="font-medium text-xs text-center break-all line-clamp-2">
+              {type === 'audio' && isExtractingWaveform ? "Extracting waveform..." : file.name}
+            </span>
           </div>
         ) : (
           <>
@@ -461,6 +503,7 @@ export default function LinguaPlayerPage() {
     setActiveSrtMode('original');
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudioUrl(null);
+    setWaveformPeaks(null);
     setSubtitles([]);
     setCurrentSentenceIndex(-1);
     setIsPlaying(false);
@@ -530,10 +573,6 @@ export default function LinguaPlayerPage() {
                       <SelectItem value="medium">Medium</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="flex items-center gap-2 mb-1">
-                  <Switch id="yt-volume-adj" checked={enableVolumeAdjustment} onCheckedChange={setEnableVolumeAdjustment} disabled={isProcessing} />
-                  <Label htmlFor="yt-volume-adj" className="text-sm cursor-pointer text-foreground font-medium">Generate volume-adjusted subtitles (slower)</Label>
                 </div>
                 <Button
                   onClick={handleProcessUrl}
@@ -605,10 +644,6 @@ export default function LinguaPlayerPage() {
                       )}
                     </Button>
                   </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Switch id="upload-volume-adj" checked={enableVolumeAdjustment} onCheckedChange={setEnableVolumeAdjustment} disabled={isProcessing} />
-                    <Label htmlFor="upload-volume-adj" className="text-sm cursor-pointer text-foreground font-medium">Generate volume-adjusted subtitles (slower)</Label>
-                  </div>
                 </div>
               )}
             </div>
@@ -627,9 +662,12 @@ export default function LinguaPlayerPage() {
               srtContent={srtContent}
               setSrtContent={setSrtContent}
               srtContentAdjusted={srtContentAdjusted}
-              setSrtContentAdjusted={setSrtContentAdjusted}
               activeSrtMode={activeSrtMode}
               onSrtModeChange={handleSrtModeChange}
+              waveformPeaks={waveformPeaks}
+              isGeneratingAdjustedSrt={isGeneratingAdjustedSrt}
+              onGenerateAdjustedSrt={handleGenerateAdjustedSrt}
+              isExtractingWaveform={isExtractingWaveform}
             />
           )}
         </CardContent>

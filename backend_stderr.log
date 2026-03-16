@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "C:\Users\iMonet\Projects\antigravity\LinguaPlayer-main\backend\app.py", line 1082, in <module>
+    print("\U0001f3b5 LinguaPlayer Backend — YouTube / Podcast to SRT + MP3 Upload")
+  File "C:\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\U0001f3b5' in position 0: character maps to <undefined>

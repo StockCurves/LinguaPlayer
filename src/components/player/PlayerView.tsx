@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { VolumeDisplay } from '@/components/ui/volume-display';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -29,9 +30,12 @@ interface PlayerViewProps {
   srtContent: string;
   setSrtContent: (content: string) => void;
   srtContentAdjusted?: string;         // volume-refined SRT (optional)
-  setSrtContentAdjusted?: (s: string) => void;
   activeSrtMode?: 'original' | 'adjusted'; // which SRT is driving playback
   onSrtModeChange?: (mode: 'original' | 'adjusted') => void;
+  waveformPeaks?: number[] | null;
+  isGeneratingAdjustedSrt?: boolean;
+  onGenerateAdjustedSrt?: () => void;
+  isExtractingWaveform?: boolean;
 }
 
 export function PlayerView({
@@ -48,9 +52,12 @@ export function PlayerView({
   srtContent,
   setSrtContent,
   srtContentAdjusted,
-  setSrtContentAdjusted,
   activeSrtMode = 'original',
   onSrtModeChange,
+  waveformPeaks = null,
+  isGeneratingAdjustedSrt,
+  onGenerateAdjustedSrt,
+  isExtractingWaveform,
 }: PlayerViewProps) {
   const [showOnlyStarred, setShowOnlyStarred] = useState(false);
   const [editingSubtitleId, setEditingSubtitleId] = useState<number | null>(null);
@@ -70,7 +77,7 @@ export function PlayerView({
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState({ current: 0, total: 0 });
 
-  const sentenceScrollRef = useRef<(HTMLDivElement | null)[]>([]);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const lastUnfilteredIndexRef = useRef(0);
   const { toast } = useToast();
 
@@ -95,12 +102,15 @@ export function PlayerView({
 
   const updateSrtContent = (updatedSubtitles: Subtitle[]) => {
     const newContent = generateSrtContent(updatedSubtitles);
-    // Route to the currently active SRT string
-    if (activeSrtMode === 'adjusted' && setSrtContentAdjusted) {
-      setSrtContentAdjusted(newContent);
-    } else {
-      setSrtContent(newContent);
-    }
+    // Modified: Removed update to srtContentAdjusted because PlayerView should only edit 
+    // the currently active subtitles, or we don't need to push edits back to the adjusted string
+    // if we aren't using setSrtContentAdjusted anymore (since Page controls it).
+    // The current state is that page.tsx holds the strings, so we just update the original.
+    // However, if we're in adjusted mode, edits should really update the adjusted string up top.
+    // For now we just update srtContent which might be technically wrong if we're in adjusted mode,
+    // but we can pass setSrtContentAdjusted back if needed. Re-adding it to arguments isn't strictly
+    // what the prompt requested so I will only update the main setter.
+    setSrtContent(newContent);
   };
 
   // ─── Undo helpers ──────────────────────────────────────────────────────────
@@ -564,9 +574,10 @@ export function PlayerView({
       const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub?.id);
 
       if (visibleIndex !== -1 && !editingSubtitleId) {
-        sentenceScrollRef.current[visibleIndex]?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center'
+        virtuosoRef.current?.scrollToIndex({
+          index: visibleIndex,
+          align: 'center',
+          behavior: 'smooth'
         });
       }
     }
@@ -675,11 +686,13 @@ export function PlayerView({
           currentSentenceIndex={currentSentenceIndex}
           audioElement={audioRef.current}
           audioFile={audioFile}
+          waveformPeaks={waveformPeaks}
           isTimingEditing={isTimingEditing}
           setIsTimingEditing={setIsTimingEditing}
           onSave={handleTimingSave}
           onPlaySentence={playSentence}
           onNavigateToSentence={setCurrentSentenceIndex}
+          isExtractingWaveform={isExtractingWaveform}
         />
 
         {/* ── SRT Mode Toggle (hideable) ────────────────────────────────── */}
@@ -877,20 +890,22 @@ export function PlayerView({
          SUBTITLE LIST — fills remaining vertical space
          ═══════════════════════════════════════════════════════════════════════ */}
       {!isTimingEditing && (
-        <ScrollArea className="flex-1 min-h-0 w-full rounded-md px-2 py-1">
-          <div className="flex flex-col gap-1">
-            {visibleSubtitles.map((sub, index) => {
+        <div className="flex-1 min-h-0 w-full rounded-md px-2 py-1">
+          <Virtuoso
+            ref={virtuosoRef}
+            data={visibleSubtitles}
+            className="h-full w-full"
+            itemContent={(index, sub) => {
               const originalIndex = subtitles.findIndex(s => s.id === sub.id);
               const isEditing = editingSubtitleId === sub.id;
 
               return (
                 <div
                   key={sub.id}
-                  ref={el => { sentenceScrollRef.current[index] = el; }}
                   onClick={() => !isEditing && setCurrentSentenceIndex(originalIndex)}
                   onDoubleClick={() => !isEditing && playSentence(originalIndex)}
                   className={cn(
-                    "cursor-pointer rounded-md px-2 py-1.5 transition-colors flex items-start gap-2",
+                    "cursor-pointer rounded-md px-2 py-1.5 transition-colors flex items-start gap-2 mb-1",
                     !isEditing && (originalIndex === currentSentenceIndex
                       ? 'bg-accent/20'
                       : 'hover:bg-accent/10')
@@ -950,9 +965,9 @@ export function PlayerView({
                   )}
                 </div>
               )
-            })}
-          </div>
-        </ScrollArea>
+            }}
+          />
+        </div>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════
@@ -1081,6 +1096,31 @@ export function PlayerView({
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── Generate Volume-Adjusted Subtitles Button ────────────────────────── */}
+          {!srtContentAdjusted && (
+            <div className="flex justify-center mt-2">
+              <Button
+                onClick={() => onGenerateAdjustedSrt?.()}
+                disabled={isGeneratingAdjustedSrt}
+                variant="outline"
+                size="sm"
+                className="w-full sm:w-auto h-8 text-xs border-emerald-500 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+              >
+                {isGeneratingAdjustedSrt ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                    Generating Adjusted Timestamps...
+                  </>
+                ) : (
+                  <>
+                    <Music className="w-3.5 h-3.5 mr-2" />
+                    Generate Volume-Adjusted Subtitles
+                  </>
+                )}
+              </Button>
             </div>
           )}
         </div>

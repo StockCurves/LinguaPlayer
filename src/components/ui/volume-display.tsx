@@ -4,29 +4,32 @@ import React, { useState, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import type { Subtitle } from '@/app/page';
 import { Button } from './button';
-import { Check, X } from 'lucide-react';
+import { Check, X, Loader2 } from 'lucide-react';
 
 interface VolumeDisplayProps {
   subtitles: Subtitle[];
   currentSentenceIndex: number;
   audioElement: HTMLAudioElement | null;
   audioFile: File | null;
+  waveformPeaks?: number[] | null;
   isTimingEditing: boolean;
   setIsTimingEditing: (isEditing: boolean) => void;
   onSave: (newStartTime: number, newEndTime: number) => void;
   onPlaySentence: (index: number) => void;
   onNavigateToSentence: (index: number) => void;
+  isExtractingWaveform?: boolean;
 }
 
 const drawWaveform = (
   canvas: HTMLCanvasElement,
-  audioBuffer: AudioBuffer,
+  waveformPeaks: number[] | AudioBuffer | null,
   color: string,
   viewStartTime: number,
-  viewEndTime: number
+  viewEndTime: number,
+  audioDuration: number
 ) => {
   const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+  if (!ctx || !waveformPeaks) return;
 
   const dpr = window.devicePixelRatio || 1;
   const { width, height } = canvas.getBoundingClientRect();
@@ -34,16 +37,21 @@ const drawWaveform = (
   canvas.height = height * dpr;
   ctx.scale(dpr, dpr);
 
-  ctx.clearRect(0, 0, width, height);
+  const isAudioBuffer = waveformPeaks instanceof AudioBuffer;
+  const dataLength = isAudioBuffer ? waveformPeaks.length : waveformPeaks.length;
 
-  const totalDuration = audioBuffer.duration;
-  const startIndex = Math.floor((viewStartTime / totalDuration) * audioBuffer.length);
-  const endIndex = Math.ceil((viewEndTime / totalDuration) * audioBuffer.length);
+  const startIndex = Math.floor((viewStartTime / audioDuration) * dataLength);
+  const endIndex = Math.ceil((viewEndTime / audioDuration) * dataLength);
   const viewLength = endIndex - startIndex;
 
   if (viewLength <= 0) return;
 
-  const channelData = audioBuffer.getChannelData(0).slice(startIndex, endIndex);
+  let channelData: Float32Array | number[];
+  if (isAudioBuffer) {
+    channelData = waveformPeaks.getChannelData(0).slice(startIndex, endIndex);
+  } else {
+    channelData = waveformPeaks.slice(startIndex, endIndex);
+  }
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
@@ -53,18 +61,25 @@ const drawWaveform = (
   const step = Math.ceil(channelData.length / width);
 
   for (let i = 0; i < width; i++) {
+    // Map pixel i to a range [startIdx, endIdx] in channelData
+    const dataStart = Math.floor((i / width) * channelData.length);
+    const dataEnd = Math.ceil(((i + 1) / width) * channelData.length);
+    
     let min = 1.0;
-    let max = -1.0;
-    const start = i * step;
+    let max = isAudioBuffer ? -1.0 : 0.0;
 
-    for (let j = 0; j < step; j++) {
-      const datum = channelData[start + j];
+    for (let j = dataStart; j < dataEnd; j++) {
+      const datum = channelData[j];
+      if (datum === undefined) continue;
       if (datum < min) min = datum;
       if (datum > max) max = datum;
     }
 
     const x = i;
-    const lineHeight = Math.max(1, (max - min) * (height / 2));
+    // For AudioBuffer, amplitude ranges from -1 to 1. 
+    // For peaks, amplitude is 0 to 1, so we mirror it visually around the center.
+    const amplitude = isAudioBuffer ? (max - min) : (max * 2);
+    const lineHeight = Math.max(1, amplitude * (height / 2));
     const yTop = middleY - (lineHeight / 2);
 
     ctx.moveTo(x, yTop);
@@ -79,7 +94,7 @@ const formatTime = (seconds: number): string => {
   return `${m}:${s}`;
 };
 
-export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, audioFile, isTimingEditing, setIsTimingEditing, onSave, onPlaySentence, onNavigateToSentence }: VolumeDisplayProps) {
+export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, audioFile, waveformPeaks, isTimingEditing, setIsTimingEditing, onSave, onPlaySentence, onNavigateToSentence, isExtractingWaveform }: VolumeDisplayProps) {
   const [waveformBuffer, setWaveformBuffer] = useState<AudioBuffer | null>(null);
   const [panTick, setPanTick] = useState(0); // incremented by RAF to force re-renders during pan
   const containerRef = useRef<HTMLDivElement>(null);
@@ -184,7 +199,8 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
       setThemePrimaryColor(`hsl(${hslValues[0]} ${hslValues[1]}% ${hslValues[2]}%)`);
     }
 
-    if (audioFile && !waveformBuffer) {
+    // Only decode full audio if no fast peaks are provided AND we aren't currently waiting for backend extraction
+    if (audioFile && !waveformPeaks && !waveformBuffer && !isExtractingWaveform) {
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -196,20 +212,22 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
       };
       reader.readAsArrayBuffer(audioFile);
     }
-  }, [audioFile, waveformBuffer]);
+  }, [audioFile, waveformBuffer, waveformPeaks, isExtractingWaveform]);
 
   useEffect(() => {
     const canvas = waveformCanvasRef.current;
-    if (canvas && waveformBuffer && viewDuration > 0) {
+    const dataToDraw = waveformPeaks || waveformBuffer;
+
+    if (canvas && dataToDraw && viewDuration > 0 && audioElement) {
       const redraw = () => {
-        drawWaveform(canvas, waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime);
+        drawWaveform(canvas, dataToDraw, themePrimaryColor, viewStartTime, viewEndTime, audioElement.duration);
       };
       const resizeObserver = new ResizeObserver(redraw);
       resizeObserver.observe(canvas);
       redraw();
       return () => resizeObserver.disconnect();
     }
-  }, [waveformBuffer, themePrimaryColor, viewStartTime, viewEndTime, viewDuration]);
+  }, [waveformBuffer, waveformPeaks, themePrimaryColor, viewStartTime, viewEndTime, viewDuration, audioElement]);
 
   // ─── Helper: find which subtitle index a given time falls into ───────────────
   const findSubtitleAtTime = (time: number): number => {
@@ -486,6 +504,15 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
             className="absolute w-full h-full"
           />
         </div>
+
+        {isExtractingWaveform && (
+          <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-20 backdrop-blur-[1px]">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-background shadow-sm border text-xs font-medium text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+              Loading waveform...
+            </div>
+          </div>
+        )}
 
         {subtitles.slice(startIdx, endIdx + 1).map((sub) => {
           if (sub.id === currentSub.id) return null;
