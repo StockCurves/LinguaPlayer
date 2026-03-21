@@ -20,7 +20,7 @@ export type Subtitle = {
   isStarred: boolean;
 };
 
-const BACKEND_URL = "http://localhost:5000";
+const BACKEND_URL = "http://127.0.0.1:5000";
 
 export default function LinguaPlayerPage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);

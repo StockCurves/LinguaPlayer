@@ -29,6 +29,25 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB limit
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
 
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
+@app.before_request
+def log_request():
+    print(f"[REQUEST] {request.method} {request.path} Content-Length={request.content_length}", flush=True)
+
+@app.errorhandler(500)
+def handle_500(e):
+    """Return JSON for any unhandled server error instead of HTML."""
+    print(f"[500 ERROR] {e}", flush=True)
+    traceback.print_exc()
+    return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+@app.errorhandler(413)
+def handle_413(e):
+    """Return JSON for request-too-large errors."""
+    return jsonify({"error": "File too large. Maximum size is 200MB."}), 413
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
@@ -327,26 +346,36 @@ def process_podcast():
 @app.route("/api/transcribe-upload", methods=["POST", "OPTIONS"])
 def transcribe_upload():
     if request.method == "OPTIONS": return "", 204
+    print(f"[transcribe-upload] files keys: {list(request.files.keys())}", flush=True)
+    print(f"[transcribe-upload] form keys: {list(request.form.keys())}", flush=True)
     if "file" not in request.files: return jsonify({"error": "No file uploaded"}), 400
     audio_file = request.files["file"]
     model_name = request.form.get("model", "base")
     enable_volume = request.form.get("enable_volume_adjustment", "true").lower() == "true"
     if not audio_file.filename: return jsonify({"error": "Empty filename"}), 400
+    print(f"[transcribe-upload] filename={audio_file.filename}, model={model_name}", flush=True)
     file_id = hashlib.md5(audio_file.filename.encode()).hexdigest()[:12]
     mp3_path = TEMP_DIR / f"{file_id}.mp3"
     try:
         # Always save the file to ensure we're not using a corrupted/truncated version
         audio_file.save(str(mp3_path))
+        file_size = mp3_path.stat().st_size
+        print(f"[transcribe-upload] saved to {mp3_path} ({file_size} bytes)", flush=True)
         safe_name = re.sub(r'[^\w\s-]', '', audio_file.filename).strip().replace(' ', '_')[:60]
         if not safe_name.lower().endswith('.mp3'): safe_name += '.mp3'
+        print(f"[transcribe-upload] slicing audio...", flush=True)
         chunks = slice_audio(mp3_path, file_id)
+        print(f"[transcribe-upload] {len(chunks)} chunk(s), transcribing with model={model_name}...", flush=True)
         results = transcribe_chunks(chunks, file_id, model_name)
+        print(f"[transcribe-upload] transcription done, building sentences...", flush=True)
         sentences = merge_and_build_sentences(results, get_chunk_durations(chunks) if len(chunks) > 1 else [0.0])
         srt_content = sentences_to_srt(sentences)
         srt_adjusted = sentences_to_srt(refine_end_times_by_silence(sentences, mp3_path)) if enable_volume else ""
         waveform_peaks = extract_waveform_peaks(mp3_path)
+        print(f"[transcribe-upload] done! {len(sentences)} sentences", flush=True)
         return jsonify({"srt_content": srt_content, "srt_content_adjusted": srt_adjusted, "sentence_count": len(sentences), "waveform_peaks": waveform_peaks})
     except Exception as e:
+        print(f"[transcribe-upload] ERROR: {e}", flush=True)
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
