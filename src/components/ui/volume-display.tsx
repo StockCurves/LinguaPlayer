@@ -54,37 +54,34 @@ const drawWaveform = (
   }
 
   ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
 
   const middleY = height / 2;
-  const step = Math.ceil(channelData.length / width);
-
+  
   for (let i = 0; i < width; i++) {
-    // Map pixel i to a range [startIdx, endIdx] in channelData
     const dataStart = Math.floor((i / width) * channelData.length);
     const dataEnd = Math.ceil(((i + 1) / width) * channelData.length);
     
-    let min = 1.0;
-    let max = isAudioBuffer ? -1.0 : 0.0;
-
+    let sum = 0;
+    let count = 0;
     for (let j = dataStart; j < dataEnd; j++) {
-      const datum = channelData[j];
-      if (datum === undefined) continue;
-      if (datum < min) min = datum;
-      if (datum > max) max = datum;
+      const datum = Math.abs(channelData[j]);
+      if (datum !== undefined) {
+        sum += datum;
+        count++;
+      }
     }
+    const avg = count > 0 ? sum / count : 0;
 
     const x = i;
-    // For AudioBuffer, amplitude ranges from -1 to 1. 
-    // For peaks, amplitude is 0 to 1, so we mirror it visually around the center.
-    const amplitude = isAudioBuffer ? (max - min) : (max * 2);
-    const lineHeight = Math.max(1, amplitude * (height / 2));
+    const lineHeight = Math.max(2, avg * height * 1.5);
     const yTop = middleY - (lineHeight / 2);
 
     ctx.moveTo(x, yTop);
     ctx.lineTo(x, yTop + lineHeight);
   }
+  ctx.lineCap = 'round';
   ctx.stroke();
 };
 
@@ -475,8 +472,8 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
       <div
         ref={containerRef}
         className={cn(
-          "relative w-full h-20 bg-secondary/30 rounded-lg flex items-end overflow-hidden",
-          !isTimingEditing && "cursor-grab active:cursor-grabbing"
+          "relative w-full h-20 bg-card rounded-xl border-2 border-border/50 shadow-inner group overflow-hidden transition-all duration-300",
+          !isTimingEditing && "cursor-grab active:cursor-grabbing hover:border-primary/30"
         )}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
@@ -535,31 +532,31 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
 
         {/* Highlighted region between start and end handles */}
         <div
-          className="absolute top-0 bottom-0 bg-primary/20"
+          className="absolute top-0 bottom-0 bg-primary/30 border-y border-primary/40 z-10"
           style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }}
         >
           {/* Start Handle — wider grab zone for easy clicking */}
           <div
             onMouseDown={(e) => handleMouseDown(e, 'start')}
             className={cn(
-              "absolute top-0 bottom-0 flex items-center justify-center cursor-ew-resize group",
-              "w-5 -left-2.5" // wide invisible hit area centred on the 2px line
+              "absolute top-0 bottom-0 flex items-center justify-center cursor-ew-resize group/h",
+              "w-6 -left-3 z-10"
             )}
             title="Drag or use ← → to adjust start time"
           >
             {/* Visual bar */}
             <div className={cn(
-              "absolute top-0 bottom-0 w-1 transition-colors",
-              isTimingEditing ? "bg-blue-500 group-hover:bg-blue-400" : "bg-primary group-hover:bg-blue-400"
+              "absolute top-0 bottom-0 w-[3px] transition-all duration-300 bg-primary shadow-sm",
+              isTimingEditing ? "shadow-md shadow-primary/60 scale-x-110" : "group-hover/h:opacity-100 group-hover/h:bg-primary/90"
             )} />
-            {/* Grip nub */}
+            {/* Grip handle */}
             <div className={cn(
-              "relative z-10 w-1 h-6 rounded-sm transition-colors",
-              isTimingEditing ? "bg-blue-300 group-hover:bg-white" : "bg-primary/70 group-hover:bg-blue-300"
+              "relative w-2 h-10 rounded-full transition-all duration-300 shadow-md bg-white border-2 border-primary",
+              isTimingEditing ? "scale-110 shadow-lg" : "group-hover/h:scale-110 hover:shadow-lg"
             )} />
-            {/* Time label shown in edit mode */}
+            {/* Time label */}
             {isTimingEditing && (
-              <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] font-mono text-blue-400 whitespace-nowrap select-none pointer-events-none">
+              <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-bold font-mono text-primary bg-background px-1.5 py-0.5 rounded border border-primary/20 shadow-sm whitespace-nowrap anim-fade-in">
                 {formatTime(tempStartTime ?? 0)}
               </span>
             )}
@@ -569,24 +566,24 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
           <div
             onMouseDown={(e) => handleMouseDown(e, 'end')}
             className={cn(
-              "absolute top-0 bottom-0 flex items-center justify-center cursor-ew-resize group",
-              "w-5 -right-2.5"
+              "absolute top-0 bottom-0 flex items-center justify-center cursor-ew-resize group/h",
+              "w-6 -right-3 z-10"
             )}
             title="Drag or use Shift+← Shift+→ to adjust end time"
           >
             {/* Visual bar */}
             <div className={cn(
-              "absolute top-0 bottom-0 w-1 transition-colors",
-              isTimingEditing ? "bg-blue-500 group-hover:bg-blue-400" : "bg-primary group-hover:bg-blue-400"
+              "absolute top-0 bottom-0 w-[3px] transition-all duration-300 bg-primary shadow-sm",
+              isTimingEditing ? "shadow-md shadow-primary/60 scale-x-110" : "group-hover/h:opacity-100 group-hover/h:bg-primary/90"
             )} />
-            {/* Grip nub */}
+            {/* Grip handle */}
             <div className={cn(
-              "relative z-10 w-1 h-6 rounded-sm transition-colors",
-              isTimingEditing ? "bg-blue-300 group-hover:bg-white" : "bg-primary/70 group-hover:bg-blue-300"
+              "relative w-2 h-10 rounded-full transition-all duration-300 shadow-md bg-white border-2 border-primary",
+              isTimingEditing ? "scale-110 shadow-lg" : "group-hover/h:scale-110 hover:shadow-lg"
             )} />
-            {/* Time label shown in edit mode */}
+            {/* Time label */}
             {isTimingEditing && (
-              <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] font-mono text-blue-400 whitespace-nowrap select-none pointer-events-none">
+              <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-bold font-mono text-primary bg-background px-1.5 py-0.5 rounded border border-primary/20 shadow-sm whitespace-nowrap anim-fade-in">
                 {formatTime(tempEndTime ?? 0)}
               </span>
             )}
@@ -596,10 +593,11 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
         {/* Playhead (hidden during edit so it doesn't obscure handles) */}
         {!isTimingEditing && (
           <div
-            className="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none"
+            className="absolute top-0 bottom-0 w-[3px] bg-red-500 pointer-events-none z-30 shadow-[0_0_10px_rgba(239,68,68,0.8)]"
             style={{ left: `${((currentTime - viewStartTime) / viewDuration) * 100}%` }}
           >
-            <div className="absolute -top-1 -left-1 w-3 h-3 bg-red-500 rounded-full" />
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4 h-4 bg-red-500 rounded-full shadow-lg border-2 border-white" />
+            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-4 bg-red-500 rounded-full shadow-lg border-2 border-white" />
           </div>
         )}
       </div>
@@ -608,18 +606,16 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
 
       {/* Edit mode controls */}
       {isTimingEditing && (
-        <div className="flex flex-col items-center gap-1 animate-in fade-in">
-          <p className="text-[11px] text-muted-foreground/70 select-none">
-            <span className="font-semibold text-blue-400">← →</span> start &nbsp;|&nbsp;
-            <span className="font-semibold text-blue-400">Shift+← →</span> end &nbsp;|&nbsp;
-            <span className="font-semibold text-blue-400">Enter</span> save &nbsp;|&nbsp;
-            <span className="font-semibold text-blue-400">Esc</span> cancel
-          </p>
-          <div className="flex justify-center gap-2">
-            <Button onClick={handleSave} size="sm">
-              <Check className="w-4 h-4 mr-2" /> Save Timestamps
+        <div className="flex flex-col items-center gap-3 py-2 anim-slide-up border rounded-2xl bg-secondary/10 px-4">
+          <div className="flex items-center gap-4 text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest">
+            <span className="flex items-center gap-1"><kbd className="bg-background px-1 rounded border shadow-sm">←</kbd> <kbd className="bg-background px-1 rounded border shadow-sm">→</kbd> MOVE START</span>
+            <span className="flex items-center gap-1"><kbd className="bg-background px-1 rounded border shadow-sm">⇧</kbd>+<kbd className="bg-background px-1 rounded border shadow-sm">←</kbd> <kbd className="bg-background px-1 rounded border shadow-sm">→</kbd> MOVE END</span>
+          </div>
+          <div className="flex justify-center gap-3 w-full">
+            <Button onClick={handleSave} size="sm" className="flex-1 max-w-[160px] font-bold h-9">
+              <Check className="w-4 h-4 mr-2" /> Save Changes
             </Button>
-            <Button onClick={handleCancel} variant="ghost" size="sm">
+            <Button onClick={handleCancel} variant="ghost" size="sm" className="font-bold h-9">
               <X className="w-4 h-4 mr-2" /> Cancel
             </Button>
           </div>

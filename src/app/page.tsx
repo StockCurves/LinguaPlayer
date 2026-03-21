@@ -258,7 +258,13 @@ export default function LinguaPlayerPage() {
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        const text = await res.text().catch(() => "No response body");
+        let err;
+        try {
+          err = JSON.parse(text);
+        } catch (e) {
+          throw new Error(`Server error ${res.status}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
+        }
         throw new Error(err.error || `Server error ${res.status}`);
       }
 
@@ -315,7 +321,13 @@ export default function LinguaPlayerPage() {
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        const text = await res.text().catch(() => "No response body");
+        let err;
+        try {
+          err = JSON.parse(text);
+        } catch (e) {
+          throw new Error(`Server error ${res.status}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
+        }
         throw new Error(err.error || `Server error ${res.status}`);
       }
 
@@ -371,7 +383,14 @@ export default function LinguaPlayerPage() {
       });
 
       if (!res.ok) {
-        throw new Error("Failed to generate adjusted subtitles");
+        const text = await res.text().catch(() => "No response body");
+        let err;
+        try {
+          err = JSON.parse(text);
+        } catch (e) {
+          throw new Error(`Server error ${res.status}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
+        }
+        throw new Error(err.error || `Server error ${res.status}`);
       }
 
       const data = await res.json();
@@ -443,41 +462,53 @@ export default function LinguaPlayerPage() {
     };
   }, [audioRef, subtitles, currentSentenceIndex]);
 
-  const UploadBox = ({ type }: { type: 'audio' | 'srt' }) => {
+  const renderUploadBox = (type: 'audio' | 'srt') => {
     const file = type === 'audio' ? audioFile : srtFile;
     const Icon = type === 'audio' ? FileAudio : FileText;
-    const title = type === 'audio' ? 'Upload Audio' : 'Upload Subtitle';
+    const title = type === 'audio' ? 'Audio File' : 'Subtitle File';
     const accept = type === 'audio' ? 'audio/*' : '.srt';
 
     return (
       <div
         className={cn(
-          "relative flex flex-col items-center justify-center p-4 sm:p-6 border-2 border-dashed rounded-lg text-center cursor-pointer transition-colors",
-          isDragging === type ? 'border-primary bg-primary/10' : 'border-border hover:border-primary hover:bg-accent/10'
+          "relative flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-[1.5rem] text-center cursor-pointer transition-all duration-300 group",
+          isDragging === type 
+            ? 'border-primary bg-primary/10 scale-[1.02]' 
+            : 'border-secondary bg-secondary/20 hover:border-primary/50 hover:bg-secondary/40'
         )}
         onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(type); }}
         onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(null); }}
         onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
         onDrop={(e) => handleDrop(e, type)}
       >
-        {file ? (
-          <div className="flex flex-col items-center gap-2 py-2 text-green-600 dark:text-green-400">
-            {type === 'audio' && isExtractingWaveform ? (
-              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <div className={cn(
+          "mb-3 p-3 rounded-2xl transition-all duration-300 group-hover:scale-110",
+          file ? "bg-green-500/10 text-green-500" : "bg-background/50 text-muted-foreground"
+        )}>
+          {file ? (
+            type === 'audio' && isExtractingWaveform ? (
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
             ) : (
-              <CheckCircle2 className="w-8 h-8" />
-            )}
-            <span className="font-medium text-xs text-center break-all line-clamp-2">
-              {type === 'audio' && isExtractingWaveform ? "Extracting waveform..." : file.name}
+              <CheckCircle2 className="w-6 h-6" />
+            )
+          ) : (
+            <Icon className="w-6 h-6" />
+          )}
+        </div>
+
+        {file ? (
+          <div className="flex flex-col items-center gap-1 px-2">
+            <span className="font-bold text-xs text-foreground line-clamp-1">
+              {type === 'audio' && isExtractingWaveform ? "Extracting..." : file.name}
             </span>
+            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">Ready</span>
           </div>
         ) : (
-          <>
-            <UploadCloud className="w-8 h-8 text-muted-foreground mb-2" />
-            <h3 className="font-semibold text-sm">{title}</h3>
-            <p className="text-muted-foreground text-xs">Click or drag & drop</p>
-          </>
+          <div className="flex flex-col items-center gap-1">
+            <h3 className="font-bold text-sm tracking-tight">{title}</h3>
+          </div>
         )}
+        
         <Input
           type="file"
           accept={accept}
@@ -516,131 +547,157 @@ export default function LinguaPlayerPage() {
 
   return (
     <main ref={mainContainerRef} tabIndex={-1} className={cn(
-      "flex w-full flex-col items-center bg-background font-body focus:outline-none",
+      "flex w-full flex-col items-center bg-background font-body focus:outline-none transition-colors duration-500",
       showUploadView
-        ? "min-h-dvh justify-center p-4 sm:p-6 md:p-8"
+        ? "min-h-dvh justify-center p-2 sm:p-4 premium-gradient"
         : "h-dvh p-2 sm:p-3"
     )}>
+      {/* Background Decorative Elements */}
+      {showUploadView && (
+        <div className="fixed inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-primary/20 rounded-full blur-[120px] animate-pulse" />
+          <div className="absolute -bottom-[10%] -right-[10%] w-[40%] h-[40%] bg-accent/20 rounded-full blur-[120px] animate-pulse" style={{ animationDelay: '2s' }} />
+        </div>
+      )}
       <Card className={cn(
-        "w-full shadow-xl animate-in fade-in zoom-in-95 duration-500",
+        "w-full shadow-2xl transition-all duration-700",
         showUploadView
-          ? "max-w-2xl rounded-2xl"
-          : "max-w-4xl rounded-xl flex flex-col overflow-hidden",
+          ? "max-w-3xl glass-panel border-white/20 rounded-[2rem] p-1 sm:p-2 anim-slide-up"
+          : "max-w-5xl rounded-2xl flex flex-col overflow-hidden border-none shadow-none",
         !showUploadView && "flex-1 min-h-0"
       )}>
-        <CardHeader className={cn("text-center", !showUploadView && "py-1")}>
+        <CardHeader className={cn("text-center space-y-1", showUploadView ? "pb-2" : "py-1")}>
+
           <CardTitle
             className={cn(
-              showUploadView ? "text-3xl" : "text-base cursor-pointer hover:text-primary transition-colors",
-              "font-headline tracking-tight"
+              showUploadView ? "text-3xl sm:text-4xl" : "text-lg cursor-pointer hover:text-primary transition-colors",
+              "font-headline tracking-tight font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60"
             )}
             onClick={!showUploadView ? handleBackToUpload : undefined}
             title={!showUploadView ? 'Back to upload page' : undefined}
           >
             Lingua Player
           </CardTitle>
-          {showUploadView && <CardDescription>Practice listening sentence by sentence.</CardDescription>}
+          {showUploadView && (
+            <CardDescription className="text-base sm:text-lg text-muted-foreground/80 max-w-none mx-auto">
+              Master any language with interactive, sentence-by-sentence playback.
+            </CardDescription>
+          )}
         </CardHeader>
         <CardContent className={cn(!showUploadView && "flex-1 min-h-0 flex flex-col p-3 sm:p-4")}>
           {showUploadView ? (
-            <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-4 py-2 sm:py-4">
               {/* ── URL Section (YouTube / Podcast) ─────────────── */}
-              <div className="flex flex-col gap-3 p-4 sm:p-6 border-2 border-dashed rounded-lg border-border bg-accent/5">
-                <div className="flex items-center gap-2 text-foreground">
-                  <Globe className="w-5 h-5 text-blue-500" />
-                  <h3 className="font-semibold">From URL</h3>
+              <div className="flex flex-col gap-3 p-4 rounded-2xl bg-secondary/30 border border-secondary/50 shadow-inner group transition-all hover:bg-secondary/40">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-full bg-blue-500/10 p-2 text-blue-500">
+                      <Globe className="w-5 h-5" />
+                    </div>
+                    <h3 className="font-bold text-lg">Import from URL</h3>
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-primary/60">Automated</span>
                 </div>
-                <p className="text-muted-foreground text-sm">
-                  Paste a YouTube video URL, podcast episode link, or direct MP3 URL to auto-download audio &amp; generate subtitles with Whisper.
+                
+                <p className="text-muted-foreground text-sm leading-relaxed">
+                  Paste a link to a YouTube video or podcast. We'll handle the download and generate precise subtitles for you.
                 </p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <Input
-                    type="url"
-                    placeholder="YouTube URL, podcast URL, or direct .mp3 link"
-                    value={mediaUrl}
-                    onChange={(e) => setMediaUrl(e.target.value)}
-                    disabled={isProcessing}
-                    className="flex-1"
-                    id="media-url-input"
-                  />
-                  <Select value={whisperModel} onValueChange={setWhisperModel} disabled={isProcessing}>
-                    <SelectTrigger className="w-full sm:w-[120px]" id="model-select">
-                      <SelectValue placeholder="Model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="base">Base</SelectItem>
-                      <SelectItem value="small">Small</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                    </SelectContent>
-                  </Select>
+
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="relative flex-1 group/input">
+                      <Input
+                        type="url"
+                        placeholder="Paste link here..."
+                        value={mediaUrl}
+                        onChange={(e) => setMediaUrl(e.target.value)}
+                        disabled={isProcessing}
+                        className="h-10 bg-background/50 border-secondary focus-visible:ring-primary pl-4 pr-4 transition-all"
+                        id="media-url-input"
+                      />
+                    </div>
+                    <Select value={whisperModel} onValueChange={setWhisperModel} disabled={isProcessing}>
+                      <SelectTrigger className="w-full sm:w-[130px] h-10 bg-background/50 border-secondary" id="model-select">
+                        <SelectValue placeholder="Model" />
+                      </SelectTrigger>
+                      <SelectContent className="glass-panel-heavy">
+                        <SelectItem value="base" className="cursor-pointer">Base (Fast)</SelectItem>
+                        <SelectItem value="small" className="cursor-pointer">Small</SelectItem>
+                        <SelectItem value="medium" className="cursor-pointer">Medium (Pro)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    onClick={handleProcessUrl}
+                    disabled={isProcessing || !mediaUrl.trim()}
+                    className="w-full h-10 font-bold text-base shadow-lg shadow-primary/20 transition-all hover:scale-[1.01] active:scale-[0.99] rounded-xl overflow-hidden relative"
+                    id="process-url-btn"
+                  >
+                    {isProcessing ? (
+                      <div className="flex items-center justify-center gap-3">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span className="font-medium animate-pulse">{processingStatus || "Processing…"}</span>
+                      </div>
+                    ) : (
+                      <span className="flex items-center gap-2">
+                        Get Started <Wand2 className="w-4 h-4" />
+                      </span>
+                    )}
+                  </Button>
                 </div>
-                <Button
-                  onClick={handleProcessUrl}
-                  disabled={isProcessing || !mediaUrl.trim()}
-                  className="w-full"
-                  id="process-url-btn"
-                >
-                  {isProcessing ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      {processingStatus || "Processing…"}
-                    </>
-                  ) : (
-                    "Download & Transcribe"
-                  )}
-                </Button>
               </div>
 
               {/* ── Divider ─────────────────────────────────────── */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-border" />
-                <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">or upload files</span>
-                <div className="flex-1 h-px bg-border" />
+              <div className="flex items-center gap-3 px-2">
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+                <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-[0.2em]">Local Files</span>
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
               </div>
 
               {/* ── Manual Upload Section ───────────────────────── */}
-              <div className="grid grid-cols-2 gap-3">
-                <UploadBox type="audio" />
-                <UploadBox type="srt" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {renderUploadBox('audio')}
+                {renderUploadBox('srt')}
               </div>
 
-              {/* ── MP3-only Transcribe Section (shown when audio is loaded but no subtitles yet) ── */}
+              {/* ── MP3-only Transcribe Section ── */}
               {audioFile && subtitles.length === 0 && (
-                <div className="flex flex-col gap-3 p-4 sm:p-5 border-2 border-dashed rounded-lg border-primary/40 bg-primary/5 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                  <div className="flex items-center gap-2 text-foreground">
-                    <Wand2 className="w-5 h-5 text-primary" />
-                    <h3 className="font-semibold">Auto-Transcribe with Whisper</h3>
+                <div className="flex flex-col gap-3 p-4 rounded-2xl bg-primary/5 border border-primary/20 anim-slide-up">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-full bg-primary/10 p-2 text-primary">
+                      <Wand2 className="w-5 h-5" />
+                    </div>
+                    <h3 className="font-bold text-lg">No Subtitles Found</h3>
                   </div>
-                  <p className="text-muted-foreground text-sm">
-                    No SRT file? Generate subtitles automatically from <span className="font-medium text-foreground">{audioFile.name}</span>.
+                  <p className="text-muted-foreground text-sm leading-relaxed">
+                    We've loaded <span className="font-bold text-foreground">{audioFile.name}</span>. Would you like us to generate subtitles automatically?
                   </p>
-                  <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="flex flex-col sm:flex-row gap-3">
                     <Select value={whisperModel} onValueChange={setWhisperModel} disabled={isProcessing}>
-                      <SelectTrigger className="w-full sm:w-[140px]" id="upload-model-select">
+                      <SelectTrigger className="w-full sm:w-[150px] h-11 bg-background/50 border-primary/20" id="upload-model-select">
                         <SelectValue placeholder="Model" />
                       </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="base">Base (fast)</SelectItem>
+                      <SelectContent className="glass-panel-heavy">
+                        <SelectItem value="base">Base (Fast)</SelectItem>
                         <SelectItem value="small">Small</SelectItem>
-                        <SelectItem value="medium">Medium (accurate)</SelectItem>
+                        <SelectItem value="medium">Medium (Accurate)</SelectItem>
                       </SelectContent>
                     </Select>
                     <Button
                       onClick={handleTranscribeUpload}
                       disabled={isProcessing}
-                      className="flex-1"
+                      className="flex-1 h-11 font-bold shadow-md shadow-primary/10 transition-all hover:scale-[1.02]"
                       id="transcribe-upload-btn"
                     >
                       {isProcessing ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          {processingStatus || "Transcribing…"}
-                        </>
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>{processingStatus || "Transcribing…"}</span>
+                        </div>
                       ) : (
-                        <>
-                          <Wand2 className="w-4 h-4 mr-2" />
-                          Transcribe
-                        </>
+                        <span className="flex items-center gap-2">
+                          <Wand2 className="w-4 h-4" /> Start AI Transcription
+                        </span>
                       )}
                     </Button>
                   </div>

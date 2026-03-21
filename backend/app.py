@@ -26,14 +26,8 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB limit
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
-
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    return response
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -341,7 +335,8 @@ def transcribe_upload():
     file_id = hashlib.md5(audio_file.filename.encode()).hexdigest()[:12]
     mp3_path = TEMP_DIR / f"{file_id}.mp3"
     try:
-        if not mp3_path.exists(): audio_file.save(str(mp3_path))
+        # Always save the file to ensure we're not using a corrupted/truncated version
+        audio_file.save(str(mp3_path))
         safe_name = re.sub(r'[^\w\s-]', '', audio_file.filename).strip().replace(' ', '_')[:60]
         if not safe_name.lower().endswith('.mp3'): safe_name += '.mp3'
         chunks = slice_audio(mp3_path, file_id)
@@ -383,24 +378,73 @@ def refine_srt():
 
 @app.route("/api/export-sentence-mp3", methods=["POST"])
 def export_sentence_mp3():
-    data = request.json
-    filename, start_ms, end_ms = data.get("filename"), data.get("startTime"), data.get("endTime")
-    if not filename or start_ms is None or end_ms is None: return jsonify({"error": "Missing params"}), 400
-    mp3_path = MP3_CACHE_DIR / filename
-    if not mp3_path.exists(): mp3_path = TEMP_DIR / filename
-    if not mp3_path.exists(): return jsonify({"error": f"File not found: {filename}"}), 404
+    # Supports both JSON and FormData
+    if request.is_json:
+        data = request.json
+    else:
+        # For multipart/form-data, parameters are in request.form
+        data = request.form
+
+    filename = data.get("filename")
+    # Support both naming conventions
+    start_ms = data.get("start_ms") or data.get("startTime")
+    end_ms = data.get("end_ms") or data.get("endTime")
+
+    if not filename or start_ms is None or end_ms is None:
+        return jsonify({"error": f"Missing params: filename={filename}, start={start_ms}, end={end_ms}"}), 400
+
     try:
+        start_ms, end_ms = int(float(start_ms)), int(float(end_ms))
+    except (ValueError, TypeError):
+        return jsonify({"error": f"Invalid start/end time format: start={start_ms}, end={end_ms}"}), 400
+
+    temp_source_path = None
+    try:
+        if "file" in request.files:
+            # If file is uploaded, use it
+            audio_file = request.files["file"]
+            # Create a semi-unique temp name to avoid collisions
+            safe_name = secure_filename(audio_file.filename) or "temp_audio"
+            temp_source_path = TEMP_DIR / f"exp_src_{os.getpid()}_{safe_name}"
+            audio_file.save(str(temp_source_path))
+            mp3_path = temp_source_path
+        else:
+            # If no file is provided, it must be some error in the request
+            return jsonify({"error": "No audio file provided in request"}), 400
+
+        if not mp3_path.exists():
+            return jsonify({"error": "Source audio file failed to save"}), 500
+
         from pydub import AudioSegment
         audio = AudioSegment.from_mp3(str(mp3_path))
+        
+        # Clamp milliseconds to audio length
+        start_ms = max(0, min(start_ms, len(audio)))
+        end_ms = max(0, min(end_ms, len(audio)))
+        
         segment = audio[start_ms:end_ms]
-        TARGET_DBFS = -10.0
-        if segment.dBFS != float('-inf') and len(segment) > 0:
-            segment = segment.apply_gain(TARGET_DBFS - segment.dBFS)
+
+        # Apply gain to normalize
+        TARGET_DBFS = -12.0
+        if segment.dBFS != float("-inf") and len(segment) > 0:
+            diff = TARGET_DBFS - segment.dBFS
+            # Don't boost too much if it's very quiet to avoid noise
+            segment = segment.apply_gain(max(-20.0, min(20.0, diff)))
+
         buf = io.BytesIO()
-        segment.exports(buf, format="mp3", bitrate="192k")
+        # Correct method name is .export() not .exports()
+        segment.export(buf, format="mp3", bitrate="192k")
         buf.seek(0)
+        
+        # Cleanup temp file immediately
+        if temp_source_path and temp_source_path.exists():
+            temp_source_path.unlink()
+
         return send_file(buf, mimetype="audio/mpeg", as_attachment=True, download_name=filename)
     except Exception as e:
+        if temp_source_path and temp_source_path.exists():
+            try: temp_source_path.unlink()
+            except: pass
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 

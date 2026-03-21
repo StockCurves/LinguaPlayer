@@ -534,8 +534,8 @@ export function PlayerView({
         });
 
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-          console.error(`Failed to export ${fileName}:`, err);
+          const errBody = await res.json().catch(() => null) || { error: await res.text().catch(() => 'Unknown error') };
+          console.error(`Failed to export ${fileName}:`, errBody);
           continue;
         }
 
@@ -555,8 +555,8 @@ export function PlayerView({
         if (i < starred.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 300));
         }
-      } catch (err) {
-        console.error(`Failed to export ${fileName}:`, err);
+      } catch (err: any) {
+        console.error(`Failed to export ${fileName}:`, err?.message || err);
       }
     }
 
@@ -569,19 +569,22 @@ export function PlayerView({
   };
 
   useEffect(() => {
-    if (subtitles.length > 0 && currentSentenceIndex !== -1) {
+    if (subtitles.length > 0 && currentSentenceIndex !== -1 && !isTimingEditing) {
       const currentSub = subtitles[currentSentenceIndex];
       const visibleIndex = visibleSubtitles.findIndex(sub => sub.id === currentSub?.id);
 
       if (visibleIndex !== -1 && !editingSubtitleId) {
-        virtuosoRef.current?.scrollToIndex({
-          index: visibleIndex,
-          align: 'center',
-          behavior: 'smooth'
-        });
+        const timer = setTimeout(() => {
+          virtuosoRef.current?.scrollToIndex({
+            index: visibleIndex,
+            align: 'center',
+            behavior: 'smooth'
+          });
+        }, 50);
+        return () => clearTimeout(timer);
       }
     }
-  }, [currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles, editingSubtitleId]);
+  }, [currentSentenceIndex, subtitles, showOnlyStarred, visibleSubtitles, editingSubtitleId, isTimingEditing]);
 
 
   useEffect(() => {
@@ -680,7 +683,7 @@ export function PlayerView({
       {/* ═══════════════════════════════════════════════════════════════════════
          PINNED TOP SECTION — always visible: waveform, controls, edit toolbar
          ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="flex-shrink-0 flex flex-col gap-2 pb-2 border-b">
+      <div className="flex-shrink-0 flex flex-col gap-1 pb-1 border-b">
         <VolumeDisplay
           subtitles={subtitles}
           currentSentenceIndex={currentSentenceIndex}
@@ -697,35 +700,32 @@ export function PlayerView({
 
         {/* ── SRT Mode Toggle (hideable) ────────────────────────────────── */}
         {showControls && srtContentAdjusted && !isTimingEditing && (
-          <div className="flex items-center justify-center">
-            <div className="flex items-center gap-px bg-muted/50 rounded-md p-px border text-[10px]">
+          <div className="flex items-center justify-center py-0.5">
+            <div className="flex items-center gap-1 bg-secondary/50 rounded-xl p-1 border border-border shadow-inner">
               <button
                 id="srt-mode-original"
                 onClick={() => onSrtModeChange?.('original')}
                 className={cn(
-                  "px-2 py-0.5 rounded font-medium transition-all duration-200",
+                  "px-4 py-1 rounded-lg text-xs font-bold transition-all duration-300",
                   activeSrtMode === 'original'
-                    ? 'bg-background shadow-sm text-foreground'
+                    ? 'bg-background shadow-md text-foreground'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                Original
+                ORIGINAL
               </button>
               <button
                 id="srt-mode-adjusted"
                 onClick={() => onSrtModeChange?.('adjusted')}
                 className={cn(
-                  "px-2 py-0.5 rounded font-medium transition-all duration-200 flex items-center gap-1",
+                  "px-4 py-1 rounded-lg text-xs font-bold transition-all duration-300 flex items-center gap-2",
                   activeSrtMode === 'adjusted'
-                    ? 'bg-emerald-500/10 shadow-sm text-emerald-600 dark:text-emerald-400'
+                    ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/20'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                <span className={cn(
-                  "w-1 h-1 rounded-full transition-colors",
-                  activeSrtMode === 'adjusted' ? 'bg-emerald-500' : 'bg-muted-foreground/40'
-                )} />
-                Vol-Adjusted
+                {activeSrtMode === 'adjusted' && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                VOL-ADJUSTED
               </button>
             </div>
           </div>
@@ -733,19 +733,27 @@ export function PlayerView({
 
         {/* ── Playback buttons (hideable) ─────────────────────────────────── */}
         {showControls && !isTimingEditing && (
-          <div className="flex items-center justify-center gap-2 px-1">
-            <Button onClick={handlePrevious} variant="ghost" size="icon" className="h-8 w-8" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
-              <Rewind className="h-4 w-4" />
-              <span className="sr-only">Previous sentence</span>
-            </Button>
-            <Button onClick={togglePlayPause} variant="default" size="icon" className="h-10 w-10 rounded-full shadow hover:scale-105 transition-transform flex-shrink-0" disabled={currentSentenceIndex === -1}>
-              {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-              <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
-            </Button>
-            <Button onClick={handleNext} variant="ghost" size="icon" className="h-8 w-8" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
-              <FastForward className="h-4 w-4" />
-              <span className="sr-only">Next sentence</span>
-            </Button>
+          <div className="flex items-center justify-center gap-6 px-1 py-0.5">
+            <div className="group relative">
+              <Button onClick={handlePrevious} variant="ghost" size="icon" className="h-9 w-9 rounded-xl hover:bg-secondary transition-all active:scale-90" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) <= 0}>
+                <Rewind className="h-4 w-4" />
+              </Button>
+              <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 text-[8px] font-bold text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-opacity">←</span>
+            </div>
+            
+            <div className="group relative">
+              <Button onClick={togglePlayPause} variant="default" size="icon" className="h-11 w-11 rounded-xl shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all flex-shrink-0 bg-primary hover:bg-primary/90" disabled={currentSentenceIndex === -1}>
+                {isPlaying ? <Pause className="h-5 w-5 fill-white" /> : <Play className="h-5 w-5 fill-white ml-0.5" />}
+              </Button>
+              <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 text-[8px] font-bold text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-opacity">SPACE</span>
+            </div>
+
+            <div className="group relative">
+              <Button onClick={handleNext} variant="ghost" size="icon" className="h-9 w-9 rounded-xl hover:bg-secondary transition-all active:scale-90" disabled={!visibleSubtitles.length || visibleSubtitles.findIndex(s => s.id === subtitles[currentSentenceIndex]?.id) >= visibleSubtitles.length - 1}>
+                <FastForward className="h-4 w-4" />
+              </Button>
+              <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 text-[8px] font-bold text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+            </div>
           </div>
         )}
 
@@ -753,7 +761,7 @@ export function PlayerView({
         {!isTimingEditing && (
           <>
             <div className="flex items-center gap-2 px-1">
-              <Progress value={sentenceProgress} className="flex-1 h-1.5 [&>div]:bg-accent" />
+              <Progress value={sentenceProgress} className="flex-1 h-1 rounded-full bg-secondary shadow-inner overflow-hidden [&>div]:bg-primary [&>div]:transition-all [&>div]:duration-300" />
               {isJumpInputVisible ? (
                 <form
                   onSubmit={(e) => {
@@ -789,30 +797,37 @@ export function PlayerView({
                         setJumpInputValue('');
                       }
                     }}
-                    className="w-14 h-6 text-[11px] font-mono text-center rounded-full border-2 border-red-400 bg-background outline-none focus:ring-2 focus:ring-red-300 tabular-nums [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    className="w-16 h-7 text-xs font-bold text-center rounded-lg border-2 border-primary bg-background focus:ring-4 focus:ring-primary/20 outline-none tabular-nums transition-all"
                     placeholder={String(currentSentenceIndex >= 0 ? currentSentenceIndex + 1 : 1)}
                     autoFocus
                   />
                 </form>
               ) : (
-                <span
-                  className="text-[11px] font-mono whitespace-nowrap tabular-nums cursor-pointer select-none rounded-full border-2 border-red-400 text-red-500 px-1.5 py-0.5 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                  title="Double-click to jump to a subtitle number"
+                <div 
+                  className="flex items-center gap-2 cursor-pointer group px-2 py-0.5 rounded-lg hover:bg-secondary/50 transition-all border border-transparent hover:border-border"
                   onDoubleClick={() => {
                     setJumpInputValue(String(currentSentenceIndex >= 0 ? currentSentenceIndex + 1 : ''));
                     setIsJumpInputVisible(true);
                   }}
                 >
-                  {currentSentenceIndex >= 0 ? currentSentenceIndex + 1 : '—'}/{subtitles.length}
-                </span>
+                  <span className="text-xs font-bold font-mono tracking-tighter tabular-nums text-primary">
+                    {currentSentenceIndex >= 0 ? currentSentenceIndex + 1 : '—'}
+                  </span>
+                  <span className="text-[10px] font-bold text-muted-foreground/40 font-mono">/</span>
+                  <span className="text-xs font-bold font-mono tracking-tighter tabular-nums text-muted-foreground">
+                    {subtitles.length}
+                  </span>
+                </div>
               )}
-              <button
-                onClick={() => setShowControls(v => !v)}
-                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors py-0.5 px-1 rounded hover:bg-accent/10 flex-shrink-0"
-                title={showControls ? 'Hide playback controls' : 'Show playback controls'}
-              >
-                {showControls ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-              </button>
+              <div className="flex items-center gap-1 ml-1">
+                <button
+                  onClick={() => setShowControls(v => !v)}
+                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground transition-all hover:bg-secondary active:scale-95"
+                  title={showControls ? 'Hide details' : 'Show details'}
+                >
+                  {showControls ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             {/* ── Edit Operations Toolbar (compact) ───────────────────────── */}
@@ -889,9 +904,8 @@ export function PlayerView({
       {/* ═══════════════════════════════════════════════════════════════════════
          SUBTITLE LIST — fills remaining vertical space
          ═══════════════════════════════════════════════════════════════════════ */}
-      {!isTimingEditing && (
-        <div className="flex-1 min-h-0 w-full rounded-md px-2 py-1">
-          <Virtuoso
+      <div className={cn("flex-1 min-h-0 w-full rounded-md px-2 py-1", isTimingEditing && "hidden")}>
+        <Virtuoso
             ref={virtuosoRef}
             data={visibleSubtitles}
             className="h-full w-full"
@@ -905,70 +919,110 @@ export function PlayerView({
                   onClick={() => !isEditing && setCurrentSentenceIndex(originalIndex)}
                   onDoubleClick={() => !isEditing && playSentence(originalIndex)}
                   className={cn(
-                    "cursor-pointer rounded-md px-2 py-1.5 transition-colors flex items-start gap-2 mb-1",
+                    "group relative cursor-pointer rounded-xl px-3 py-2 transition-all duration-300 mb-1 border border-transparent",
                     !isEditing && (originalIndex === currentSentenceIndex
-                      ? 'bg-accent/20'
-                      : 'hover:bg-accent/10')
+                      ? 'bg-primary/10 border-primary/20 shadow-sm'
+                      : 'hover:bg-secondary/40')
                   )}
                 >
-                  <button onClick={(e) => handleStarClick(e, sub.id)} className="p-0.5 -ml-0.5 text-muted-foreground hover:text-amber-500 transition-colors flex-shrink-0 mt-0.5">
-                    <Star className={cn("w-3.5 h-3.5", sub.isStarred ? 'text-amber-400 fill-amber-400' : 'text-muted-foreground')} />
-                    <span className="sr-only">Star sentence</span>
-                  </button>
-
-                  {isEditing ? (
-                    <div className="flex-1 flex flex-col gap-2">
-                      <Textarea
-                        value={editingText}
-                        onChange={(e) => setEditingText(e.target.value)}
-                        className="w-full"
-                        rows={2}
-                        autoFocus
-                      />
-                      <div className="flex justify-end gap-2">
-                        <Button onClick={() => handleSaveEdit(sub.id)} size="sm" variant="default">
-                          <Check className="w-4 h-4 mr-1" /> Save
-                        </Button>
-                        <Button onClick={handleCancelEdit} size="sm" variant="ghost">
-                          <X className="w-4 h-4 mr-1" /> Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex-1 flex items-start gap-2 group/sub">
-                      <p
-                        className={cn(
-                          "flex-1 text-sm leading-snug",
-                          originalIndex === currentSentenceIndex
-                            ? 'font-bold text-foreground'
-                            : 'text-muted-foreground'
-                        )}
-                      >
-                        <span className={cn("mr-1.5 text-xs", originalIndex === currentSentenceIndex ? 'text-primary' : 'opacity-50')}>{originalIndex + 1}.</span>
-                        <span>{sub.text}</span>
-                      </p>
-                      <div className="flex items-center opacity-0 group-hover/sub:opacity-100 transition-opacity">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditingSubtitleId(sub.id);
-                            setEditingText(sub.text);
-                          }}
-                          className="p-1.5 text-muted-foreground hover:text-blue-500 rounded hover:bg-black/5 dark:hover:bg-white/10"
-                          title="Edit text"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                          <span className="sr-only">Edit text</span>
-                        </button>
-                      </div>
-                    </div>
+                  {/* Selection Indicator bar */}
+                  {!isEditing && originalIndex === currentSentenceIndex && (
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-2/3 bg-primary rounded-r-full anim-fade-in" />
                   )}
+
+                  <div className="flex items-start gap-3">
+                    {isEditing ? (
+                      <>
+                        <div className="flex flex-col items-center gap-2 mt-1">
+                          <button 
+                            onClick={(e) => handleStarClick(e, sub.id)} 
+                            className={cn(
+                              "p-1 rounded-full transition-all duration-300 flex-shrink-0",
+                              sub.isStarred ? 'text-amber-400' : 'text-muted-foreground/20 hover:text-amber-400 hover:bg-amber-400/10'
+                            )}
+                          >
+                            <Star className={cn("w-3.5 h-3.5", sub.isStarred ? 'fill-amber-400' : '')} />
+                          </button>
+                          <span className="text-[10px] font-bold font-mono text-muted-foreground/40 tabular-nums">
+                            {(originalIndex + 1).toString().padStart(2, '0')}
+                          </span>
+                        </div>
+                        <div className="flex-1 flex flex-col gap-2 anim-fade-in">
+                          <Textarea
+                            value={editingText}
+                            onChange={(e) => setEditingText(e.target.value)}
+                            className="w-full min-h-[80px] bg-background/50 border-primary/20 rounded-lg focus-visible:ring-primary resize-none text-sm"
+                            autoFocus
+                          />
+                          <div className="flex justify-end gap-2">
+                            <Button onClick={() => handleSaveEdit(sub.id)} size="sm" className="h-8 rounded-lg px-3 text-xs font-bold">
+                              <Check className="w-3.5 h-3.5 mr-1" /> Save
+                            </Button>
+                            <Button onClick={handleCancelEdit} size="sm" variant="ghost" className="h-8 rounded-lg px-3 text-xs font-bold">
+                              <X className="w-3.5 h-3.5 mr-1" /> Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex-1 flex items-start gap-2.5 min-w-0">
+                        {/* Star Column */}
+                        <div className="flex flex-shrink-0 items-center justify-center h-6">
+                          <button 
+                            onClick={(e) => handleStarClick(e, sub.id)} 
+                            className={cn(
+                              "p-1 rounded-full transition-all duration-300",
+                              sub.isStarred ? 'text-amber-400' : 'text-muted-foreground/20 hover:text-amber-400 hover:bg-amber-400/10'
+                            )}
+                          >
+                            <Star className={cn("w-3.5 h-3.5", sub.isStarred ? 'fill-amber-400' : '')} />
+                          </button>
+                        </div>
+
+                        {/* Line Number Column */}
+                        <div className="flex flex-shrink-0 items-center h-6 min-w-[20px]">
+                          <span className={cn(
+                            "text-[10px] font-bold font-mono tracking-tighter tabular-nums",
+                            originalIndex === currentSentenceIndex ? 'text-primary' : 'text-muted-foreground/40'
+                          )}>
+                            {(originalIndex + 1).toString().padStart(2, '0')}
+                          </span>
+                        </div>
+
+                        {/* Subtitle Text Column */}
+                        <p
+                          className={cn(
+                            "flex-1 text-sm sm:text-base leading-6 transition-all tracking-tight",
+                            originalIndex === currentSentenceIndex
+                              ? 'font-bold text-foreground'
+                              : 'text-muted-foreground/90 font-medium'
+                          )}
+                        >
+                          {sub.text}
+                        </p>
+                        
+                        {/* Actions Column */}
+                        <div className="flex flex-shrink-0 items-center h-6 opacity-0 group-hover:opacity-100 transition-all">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingSubtitleId(sub.id);
+                              setEditingText(sub.text);
+                            }}
+                            className="p-1 text-muted-foreground hover:text-primary rounded-lg hover:bg-primary/10 transition-colors bg-background/30 border border-transparent hover:border-primary/20"
+                            title="Edit text"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )
             }}
           />
-        </div>
-      )}
+      </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
          COLLAPSIBLE ACTIONS PANEL — downloads, star controls, compare
