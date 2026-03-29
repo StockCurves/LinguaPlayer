@@ -245,10 +245,22 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
         if (event.target?.result) {
           audioContext.decodeAudioData(event.target.result as ArrayBuffer)
             .then(buffer => setWaveformBuffer(buffer))
-            .catch(e => console.error("Error decoding audio data", e));
+            .catch(e => console.error("Error decoding audio data", e))
+            .finally(() => {
+              // Close context after decoding to free resources
+              if (audioContext.state !== 'closed') {
+                audioContext.close().catch(console.error);
+              }
+            });
         }
       };
       reader.readAsArrayBuffer(audioFile);
+      
+      return () => {
+        if (audioContext.state !== 'closed') {
+          audioContext.close().catch(console.error);
+        }
+      };
     }
   }, [audioFile, waveformBuffer, waveformPeaks, isExtractingWaveform]);
 

@@ -671,7 +671,7 @@ export default function LinguaPlayerPage() {
     setSrtContent('');
     setSrtContentAdjusted('');
     setActiveSrtMode('original');
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    // Note: audioUrl revocation is now handled by the cleanup effect below
     setAudioUrl(null);
     setWaveformPeaks(null);
     setSubtitles([]);
@@ -682,6 +682,21 @@ export default function LinguaPlayerPage() {
     setCurrentFileId(null);
     fetchDashboardFiles(); // refresh context
   };
+
+  /** 
+   * BLOOM CLEANUP EFFECT: 
+   * Ensures that previous blob URLs are revoked to prevent memory leaks 
+   * and potential "net::ERR_FILE_NOT_FOUND" errors if React re-binds 
+   * before the previous URL was fully cleared. 
+   */
+  useEffect(() => {
+    const currentUrl = audioUrl;
+    return () => {
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+    };
+  }, [audioUrl]);
 
   // ── Existing File Prompt Dialog Accept ────────────────────────────
   const handleAcceptExistingFiles = () => {

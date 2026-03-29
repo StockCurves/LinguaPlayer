@@ -800,6 +800,8 @@ def dashboard_files():
     try:
         files = []
         for meta_path in USER_UPLOADS_DIR.glob("*.json"):
+            if meta_path.name.endswith(".peaks.json"):
+                continue
             file_id = meta_path.stem
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))

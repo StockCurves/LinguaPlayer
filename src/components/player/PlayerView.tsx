@@ -427,7 +427,9 @@ export function PlayerView({
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // Increased safety: wait for the browser to initiate the download 
+    // before revoking the temporary URL.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const handleDownloadSrt = () => {
@@ -479,7 +481,7 @@ export function PlayerView({
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const handleExportMd = () => {
@@ -592,7 +594,8 @@ export function PlayerView({
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        // Delay revocation for safety
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
         successCount++;
 
         // Small delay between downloads to avoid browser throttling
