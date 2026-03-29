@@ -3,17 +3,26 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Rewind, FastForward, Play, Pause, Star, StarOff, Check, X, Download, FileText, FileCode, GitCompare, ChevronDown, ChevronUp, Undo2, Scissors, Merge, Trash2, Loader2, Music, Eye, EyeOff, Pencil } from 'lucide-react';
+import { Rewind, FastForward, Play, Pause, Star, StarOff, Check, X, Download, FileText, FileCode, GitCompare, ChevronDown, ChevronUp, Undo2, Scissors, Merge, Trash2, Loader2, Music, Eye, EyeOff, Pencil, Library } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { VolumeDisplay } from '@/components/ui/volume-display';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
-import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+  DropdownMenuShortcut,
+} from '@/components/ui/dropdown-menu';
 import type { Subtitle } from '@/app/page';
 
 interface PlayerViewProps {
@@ -36,6 +45,7 @@ interface PlayerViewProps {
   isGeneratingAdjustedSrt?: boolean;
   onGenerateAdjustedSrt?: () => void;
   isExtractingWaveform?: boolean;
+  currentFileId?: string | null;
 }
 
 export function PlayerView({
@@ -58,6 +68,7 @@ export function PlayerView({
   isGeneratingAdjustedSrt,
   onGenerateAdjustedSrt,
   isExtractingWaveform,
+  currentFileId,
 }: PlayerViewProps) {
   const [showOnlyStarred, setShowOnlyStarred] = useState(false);
   const [editingSubtitleId, setEditingSubtitleId] = useState<number | null>(null);
@@ -76,6 +87,7 @@ export function PlayerView({
   const [exportPrefix, setExportPrefix] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState({ current: 0, total: 0 });
+  const [isSavingToLibrary, setIsSavingToLibrary] = useState(false);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const lastUnfilteredIndexRef = useRef(0);
@@ -477,6 +489,38 @@ export function PlayerView({
     });
   };
 
+  const handleSaveToDashboard = async () => {
+    if (!currentFileId) {
+       toast({ variant: 'destructive', title: 'File ID Missing', description: 'Cannot save this file to the library.' });
+       return;
+    }
+    setIsSavingToLibrary(true);
+    try {
+      const subsToSave = showOnlyStarred ? visibleSubtitles : subtitles;
+      const content = generateSrtContent(subsToSave);
+      
+      const res = await fetch(`${BACKEND_URL}/api/save-srt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          file_id: currentFileId,
+          srt_content: content,
+          type: activeSrtMode === 'adjusted' ? 'modified' : 'original',
+          starred_indices: subtitles.filter(s => s.isStarred).map(s => s.id)
+        })
+      });
+
+      if (!res.ok) throw new Error("Failed to save");
+      
+      toast({ title: 'Saved to Library!', description: 'Subtitles synced to your dashboard successfully.' });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: 'destructive', title: 'Save Failed', description: 'Could not sync subtitles to library.' });
+    } finally {
+      setIsSavingToLibrary(false);
+    }
+  };
+
   // ── Export starred sentences as individual MP3s ──────────────────────────
   const BACKEND_URL = "http://localhost:5000";
 
@@ -684,19 +728,21 @@ export function PlayerView({
          PINNED TOP SECTION — always visible: waveform, controls, edit toolbar
          ═══════════════════════════════════════════════════════════════════════ */}
       <div className="flex-shrink-0 flex flex-col gap-1 pb-1 border-b">
-        <VolumeDisplay
-          subtitles={subtitles}
-          currentSentenceIndex={currentSentenceIndex}
-          audioElement={audioRef.current}
-          audioFile={audioFile}
-          waveformPeaks={waveformPeaks}
-          isTimingEditing={isTimingEditing}
-          setIsTimingEditing={setIsTimingEditing}
-          onSave={handleTimingSave}
-          onPlaySentence={playSentence}
-          onNavigateToSentence={setCurrentSentenceIndex}
-          isExtractingWaveform={isExtractingWaveform}
-        />
+        {!showActions && (
+          <VolumeDisplay
+            subtitles={subtitles}
+            currentSentenceIndex={currentSentenceIndex}
+            audioElement={audioRef.current}
+            audioFile={audioFile}
+            waveformPeaks={waveformPeaks}
+            isTimingEditing={isTimingEditing}
+            setIsTimingEditing={setIsTimingEditing}
+            onSave={handleTimingSave}
+            onPlaySentence={playSentence}
+            onNavigateToSentence={setCurrentSentenceIndex}
+            isExtractingWaveform={isExtractingWaveform}
+          />
+        )}
 
         {/* ── SRT Mode Toggle (hideable) ────────────────────────────────── */}
         {showControls && srtContentAdjusted && !isTimingEditing && (
@@ -1027,6 +1073,9 @@ export function PlayerView({
       {/* ═══════════════════════════════════════════════════════════════════════
          COLLAPSIBLE ACTIONS PANEL — downloads, star controls, compare
          ═══════════════════════════════════════════════════════════════════════ */}
+      {/* ═══════════════════════════════════════════════════════════════════════
+         ADDITIONAL TOOLS — compare, generate adjusted srt
+         ═══════════════════════════════════════════════════════════════════════ */}
       {!isTimingEditing && showActions && (
         <div className="flex-shrink-0 border-t pt-2 flex flex-col gap-2 animate-in slide-in-from-bottom-2 fade-in duration-200">
           {/* Star controls */}
@@ -1054,7 +1103,13 @@ export function PlayerView({
           </div>
 
           {/* Download buttons */}
-          <div className="flex flex-wrap justify-center gap-1.5">
+          <div className="flex flex-wrap justify-center gap-1.5 mt-2">
+            {currentFileId && (
+              <Button onClick={handleSaveToDashboard} disabled={isSavingToLibrary} variant="default" size="sm" className="h-7 text-xs bg-primary hover:bg-primary/90" id="save-dashboard-btn">
+                {isSavingToLibrary ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin"/> : <Library className="mr-1 h-3.5 w-3.5" />}
+                Save to Library
+              </Button>
+            )}
             <Button onClick={handleDownloadMp3} variant="outline" size="sm" className="h-7 text-xs" id="download-mp3-player-btn">
               <Download className="mr-1 h-3.5 w-3.5" />
               .mp3
@@ -1078,10 +1133,9 @@ export function PlayerView({
               .md
             </Button>
           </div>
-
           {/* ── Compare & Verify Panel ──────────────────────────────── */}
           {srtContentAdjusted && srtRowsOrig.length > 0 && (
-            <div className="border rounded-lg overflow-hidden">
+            <div className="border rounded-lg overflow-hidden animate-in slide-in-from-bottom-2 fade-in duration-300">
               <button
                 id="compare-timestamps-toggle"
                 onClick={() => setShowCompare(v => !v)}
@@ -1155,7 +1209,7 @@ export function PlayerView({
 
           {/* ── Generate Volume-Adjusted Subtitles Button ────────────────────────── */}
           {!srtContentAdjusted && (
-            <div className="flex justify-center mt-2">
+            <div className="flex justify-center mt-2 animate-in fade-in duration-500">
               <Button
                 onClick={() => onGenerateAdjustedSrt?.()}
                 disabled={isGeneratingAdjustedSrt}

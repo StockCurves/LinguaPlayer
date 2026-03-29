@@ -23,10 +23,13 @@ interface VolumeDisplayProps {
 const drawWaveform = (
   canvas: HTMLCanvasElement,
   waveformPeaks: number[] | AudioBuffer | null,
-  color: string,
+  themePrimaryColor: string,
   viewStartTime: number,
   viewEndTime: number,
-  audioDuration: number
+  audioDuration: number,
+  currentTime: number,
+  subtitles: Subtitle[],
+  currentSentenceIndex: number
 ) => {
   const ctx = canvas.getContext('2d');
   if (!ctx || !waveformPeaks) return;
@@ -53,13 +56,31 @@ const drawWaveform = (
     channelData = waveformPeaks.slice(startIndex, endIndex);
   }
 
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
+  const colors = {
+    unselectedSub: 'hsl(208 20% 50% / 0.3)',
+    selectedUnplayed: themePrimaryColor,
+    selectedPlayed: 'hsl(215 100% 70%)', // Brighter, more vibrant blue
+    deadSpace: 'hsl(208 10% 40% / 0.05)'
+  };
 
   const middleY = height / 2;
   
+  // To optimize, we group bars by color and stroke them in batches
+  const colorGroups: Record<string, { x: number, yTop: number, h: number }[]> = {};
+  
   for (let i = 0; i < width; i++) {
+    const barTime = viewStartTime + (i / width) * (viewEndTime - viewStartTime);
+    
+    let color = colors.deadSpace;
+    const currentSub = subtitles[currentSentenceIndex];
+    
+    if (currentSub && barTime >= currentSub.startTime && barTime <= currentSub.endTime) {
+      color = barTime <= currentTime ? colors.selectedPlayed : colors.selectedUnplayed;
+    } else {
+      const inOtherSub = subtitles.some((s, idx) => idx !== currentSentenceIndex && barTime >= s.startTime && barTime <= s.endTime);
+      if (inOtherSub) color = colors.unselectedSub;
+    }
+
     const dataStart = Math.floor((i / width) * channelData.length);
     const dataEnd = Math.ceil(((i + 1) / width) * channelData.length);
     
@@ -78,11 +99,22 @@ const drawWaveform = (
     const lineHeight = Math.max(2, avg * height * 1.5);
     const yTop = middleY - (lineHeight / 2);
 
-    ctx.moveTo(x, yTop);
-    ctx.lineTo(x, yTop + lineHeight);
+    if (!colorGroups[color]) colorGroups[color] = [];
+    colorGroups[color].push({ x, yTop, h: lineHeight });
   }
+
+  ctx.lineWidth = 1.5;
   ctx.lineCap = 'round';
-  ctx.stroke();
+  
+  for (const [color, bars] of Object.entries(colorGroups)) {
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    for (const bar of bars) {
+      ctx.moveTo(bar.x, bar.yTop);
+      ctx.lineTo(bar.x, bar.yTop + bar.h);
+    }
+    ctx.stroke();
+  }
 };
 
 const formatTime = (seconds: number): string => {
@@ -94,6 +126,7 @@ const formatTime = (seconds: number): string => {
 export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, audioFile, waveformPeaks, isTimingEditing, setIsTimingEditing, onSave, onPlaySentence, onNavigateToSentence, isExtractingWaveform }: VolumeDisplayProps) {
   const [waveformBuffer, setWaveformBuffer] = useState<AudioBuffer | null>(null);
   const [panTick, setPanTick] = useState(0); // incremented by RAF to force re-renders during pan
+  const [localCurrentTime, setLocalCurrentTime] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
   const [themePrimaryColor, setThemePrimaryColor] = useState('hsl(208 26% 64%)');
@@ -182,6 +215,14 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
     currentSub?.endTime ?? rawCurrentTime
   );
 
+  // Keep localCurrentTime in sync with audio element for continuous waveform updates
+  useEffect(() => {
+    if (!audioElement) return;
+    const onTimeUpdate = () => setLocalCurrentTime(audioElement.currentTime);
+    audioElement.addEventListener('timeupdate', onTimeUpdate);
+    return () => audioElement.removeEventListener('timeupdate', onTimeUpdate);
+  }, [audioElement]);
+
   useEffect(() => {
     if (currentSub) {
       setTempStartTime(currentSub.startTime);
@@ -217,14 +258,24 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
 
     if (canvas && dataToDraw && viewDuration > 0 && audioElement) {
       const redraw = () => {
-        drawWaveform(canvas, dataToDraw, themePrimaryColor, viewStartTime, viewEndTime, audioElement.duration);
+        drawWaveform(
+          canvas, 
+          dataToDraw, 
+          themePrimaryColor, 
+          viewStartTime, 
+          viewEndTime, 
+          audioElement.duration,
+          localCurrentTime,
+          subtitles,
+          currentSentenceIndex
+        );
       };
       const resizeObserver = new ResizeObserver(redraw);
       resizeObserver.observe(canvas);
       redraw();
       return () => resizeObserver.disconnect();
     }
-  }, [waveformBuffer, waveformPeaks, themePrimaryColor, viewStartTime, viewEndTime, viewDuration, audioElement]);
+  }, [waveformBuffer, waveformPeaks, themePrimaryColor, viewStartTime, viewEndTime, viewDuration, audioElement, localCurrentTime, subtitles, currentSentenceIndex]);
 
   // ─── Helper: find which subtitle index a given time falls into ───────────────
   const findSubtitleAtTime = (time: number): number => {
@@ -532,7 +583,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
 
         {/* Highlighted region between start and end handles */}
         <div
-          className="absolute top-0 bottom-0 bg-primary/30 border-y border-primary/40 z-10"
+          className="absolute top-0 bottom-0 bg-primary/10 border-y border-primary/20 z-10"
           style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }}
         >
           {/* Start Handle — wider grab zone for easy clicking */}
@@ -590,16 +641,7 @@ export function VolumeDisplay({ subtitles, currentSentenceIndex, audioElement, a
           </div>
         </div>
 
-        {/* Playhead (hidden during edit so it doesn't obscure handles) */}
-        {!isTimingEditing && (
-          <div
-            className="absolute top-0 bottom-0 w-[3px] bg-red-500 pointer-events-none z-30 shadow-[0_0_10px_rgba(239,68,68,0.8)]"
-            style={{ left: `${((currentTime - viewStartTime) / viewDuration) * 100}%` }}
-          >
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4 h-4 bg-red-500 rounded-full shadow-lg border-2 border-white" />
-            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-4 bg-red-500 rounded-full shadow-lg border-2 border-white" />
-          </div>
-        )}
+        {/* Note: Red playhead line removed as per request. Waveform now highlights played parts dynamically. */}
       </div>
 
       {/* Hint text removed — waveform handles are self-evident */}

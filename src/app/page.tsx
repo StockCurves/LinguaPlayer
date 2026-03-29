@@ -5,12 +5,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { UploadCloud, FileAudio, FileText, CheckCircle2, Coffee, Loader2, Wand2, Globe } from 'lucide-react';
+import { UploadCloud, FileAudio, FileText, CheckCircle2, Coffee, Loader2, Wand2, Globe, Library, Clock, History, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { PlayerView } from '@/components/player/PlayerView';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 
 export type Subtitle = {
   id: number;
@@ -43,6 +44,94 @@ export default function LinguaPlayerPage() {
   const [processingStatus, setProcessingStatus] = useState('');
   const [isGeneratingAdjustedSrt, setIsGeneratingAdjustedSrt] = useState(false);
   const [isExtractingWaveform, setIsExtractingWaveform] = useState(false);
+
+  // Dashboard state
+  const [dashboardFiles, setDashboardFiles] = useState<{ id: string, title: string, filename: string, date: string, has_modified_srt: boolean }[]>([]);
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
+  const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
+  const [existingFilePrompt, setExistingFilePrompt] = useState<{ show: boolean, file_id: string, original_srt: string, modified_srt: string, filename: string, audio_base64: string, starred_indices?: number[] } | null>(null);
+  const [currentFileId, setCurrentFileId] = useState<string | null>(null);
+  const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{ show: boolean, file_id: string, title: string } | null>(null);
+
+  useEffect(() => {
+    fetchDashboardFiles();
+  }, []);
+
+  const fetchDashboardFiles = async () => {
+    setIsLoadingDashboard(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/dashboard-files`);
+      if (res.ok) {
+        const data = await res.json();
+        setDashboardFiles(data.files || []);
+      }
+    } catch (e) {
+      console.error("Failed to load dashboard files", e);
+    } finally {
+      setIsLoadingDashboard(false);
+    }
+  };
+
+  const loadDashboardFile = async (file_id: string, fileName: string) => {
+    setLoadingFileId(file_id);
+    setIsProcessing(true);
+    setProcessingStatus("Loading from Library...");
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/load-dashboard-file/${file_id}`);
+      if (!res.ok) throw new Error("Failed to load file");
+      const data = await res.json();
+      
+      const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
+      const audioBlob = new Blob([audioBytes], { type: "audio/mpeg" });
+      const generatedAudioFile = new File([audioBlob], fileName || data.filename, { type: "audio/mpeg" });
+      
+      setCurrentFileId(file_id);
+      setAudioFile(generatedAudioFile);
+      setAudioUrl(URL.createObjectURL(audioBlob));
+      
+      if (data.original_srt) {
+        const parsedSubs = parseSrtText(data.original_srt);
+        if (data.starred_indices && Array.isArray(data.starred_indices)) {
+          const starredIds = new Set(data.starred_indices);
+          parsedSubs.forEach(sub => {
+            if (starredIds.has(sub.id)) {
+              sub.isStarred = true;
+            }
+          });
+        }
+        setSrtContent(data.original_srt);
+        setSubtitles(parsedSubs);
+        setCurrentSentenceIndex(0);
+      }
+      if (data.modified_srt) setSrtContentAdjusted(data.modified_srt);
+      if (data.waveform_peaks) setWaveformPeaks(data.waveform_peaks);
+      
+      toast({ title: "Loaded from Library!" });
+    } catch (e) {
+      console.error("Load error:", e);
+      toast({ variant: "destructive", title: "Load Failed", description: "Failed to load library item." });
+    } finally {
+      setLoadingFileId(null);
+      setIsProcessing(false);
+      setProcessingStatus("");
+    }
+  };
+
+  const deleteDashboardFile = async (file_id: string) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/delete-dashboard-file/${file_id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete file");
+      
+      toast({ title: "Deleted from Library" });
+      fetchDashboardFiles();
+      setDeleteConfirmDialog(null);
+    } catch (e) {
+      console.error("Delete error:", e);
+      toast({ variant: "destructive", title: "Delete Failed", description: "Failed to delete library item." });
+    }
+  };
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const mainContainerRef = useRef<HTMLDivElement>(null);
@@ -237,7 +326,7 @@ export default function LinguaPlayerPage() {
 
   // ── MP3-only Transcription ──────────────────────────────────────────
 
-  const handleTranscribeUpload = async () => {
+  const handleTranscribeUpload = async (force: boolean = false) => {
     if (!audioFile) {
       toast({ variant: "destructive", title: "No Audio", description: "Please upload an MP3 first." });
       return;
@@ -251,6 +340,7 @@ export default function LinguaPlayerPage() {
       formData.append("file", audioFile);
       formData.append("model", whisperModel);
       formData.append("enable_volume_adjustment", "false");
+      formData.append("force_transcribe", force ? "true" : "false");
 
       const res = await fetch(`${BACKEND_URL}/api/transcribe-upload`, {
         method: "POST",
@@ -271,6 +361,23 @@ export default function LinguaPlayerPage() {
       setProcessingStatus("Processing response…");
       const data = await res.json();
 
+      if (data.exists && !force) {
+        setExistingFilePrompt({
+          show: true,
+          file_id: data.file_id,
+          original_srt: data.original_srt,
+          modified_srt: data.modified_srt,
+          filename: data.filename,
+          audio_base64: data.audio_base64,
+          starred_indices: data.starred_indices
+        });
+        setIsProcessing(false);
+        setProcessingStatus("");
+        return;
+      }
+      
+      setCurrentFileId(data.file_id);
+
       // Keep the original audio file & URL — just set subtitles
       // (srtFile stays null; PlayerView handles null gracefully)
       parseSrt(data.srt_content);
@@ -281,6 +388,7 @@ export default function LinguaPlayerPage() {
         title: "Transcription Complete!",
         description: `${data.sentence_count} sentences generated.`,
       });
+      fetchDashboardFiles(); // refresh dashboard
     } catch (error) {
       console.error("Transcription error:", error);
       toast({
@@ -294,11 +402,7 @@ export default function LinguaPlayerPage() {
     }
   };
 
-  // ── URL Processing (auto-detects YouTube vs Podcast) ────────────────
-
-  const isYoutubeUrl = (url: string): boolean => {
-    return /(?:youtube\.com|youtu\.be)/i.test(url);
-  };
+  // ── URL Processing (auto-detects YouTube vs Podcast on server) ───────
 
   const handleProcessUrl = async () => {
     if (!mediaUrl.trim()) {
@@ -307,14 +411,11 @@ export default function LinguaPlayerPage() {
     }
 
     const url = mediaUrl.trim();
-    const isYT = isYoutubeUrl(url);
-    const endpoint = isYT ? '/api/process-youtube' : '/api/process-podcast';
-
     setIsProcessing(true);
-    setProcessingStatus(isYT ? "Downloading YouTube audio & transcribing…" : "Downloading podcast audio & transcribing…");
+    setProcessingStatus("Connecting…");
 
     try {
-      const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+      const res = await fetch(`${BACKEND_URL}/api/process-url-stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, model: whisperModel, enable_volume_adjustment: false }),
@@ -323,38 +424,76 @@ export default function LinguaPlayerPage() {
       if (!res.ok) {
         const text = await res.text().catch(() => "No response body");
         let err;
-        try {
-          err = JSON.parse(text);
-        } catch (e) {
-          throw new Error(`Server error ${res.status}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
-        }
-        throw new Error(err.error || `Server error ${res.status}`);
+        try { err = JSON.parse(text); } catch { /* ignore */ }
+        throw new Error(err?.error || `Server error ${res.status}: ${text.slice(0, 200)}`);
       }
 
-      setProcessingStatus("Processing response…");
-      const data = await res.json();
+      // Read the SSE stream
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) throw new Error("No response stream");
+
+      let buffer = "";
+      let finalData: Record<string, unknown> | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse complete SSE events from the buffer
+        const events = buffer.split("\n\n");
+        buffer = events.pop() || ""; // keep the incomplete tail
+
+        for (const eventBlock of events) {
+          if (!eventBlock.trim()) continue;
+          const lines = eventBlock.split("\n");
+          let eventType = "";
+          let eventData = "";
+          for (const line of lines) {
+            if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+            if (line.startsWith("data: ")) eventData = line.slice(6);
+          }
+
+          if (!eventType || !eventData) continue;
+          const parsed = JSON.parse(eventData);
+
+          if (eventType === "progress") {
+            setProcessingStatus(parsed.message || "Processing…");
+          } else if (eventType === "done") {
+            finalData = parsed;
+          } else if (eventType === "error") {
+            throw new Error(parsed.error || "Server error during processing");
+          }
+        }
+      }
+
+      if (!finalData) throw new Error("Stream ended without result");
 
       // Decode base64 audio to a File object
-      const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
+      const audioBytes = Uint8Array.from(atob(finalData.audio_base64 as string), c => c.charCodeAt(0));
       const audioBlob = new Blob([audioBytes], { type: "audio/mpeg" });
-      const generatedAudioFile = new File([audioBlob], data.audio_filename, { type: "audio/mpeg" });
+      const generatedAudioFile = new File([audioBlob], finalData.audio_filename as string, { type: "audio/mpeg" });
 
       // Create a virtual SRT file
-      const srtBlob = new Blob([data.srt_content], { type: "text/plain" });
-      const generatedSrtFile = new File([srtBlob], data.audio_filename.replace('.mp3', '.srt'), { type: "text/plain" });
+      const srtBlob = new Blob([finalData.srt_content as string], { type: "text/plain" });
+      const generatedSrtFile = new File([srtBlob], (finalData.audio_filename as string).replace('.mp3', '.srt'), { type: "text/plain" });
 
-      // Set all state — this triggers the PlayerView to render
+      // Set all state — triggers the PlayerView to render
+      setCurrentFileId(finalData.file_id as string);
       setAudioFile(generatedAudioFile);
       setAudioUrl(URL.createObjectURL(audioBlob));
       setSrtFile(generatedSrtFile);
-      parseSrt(data.srt_content);
-      if (data.srt_content_adjusted) setSrtContentAdjusted(data.srt_content_adjusted);
-      if (data.waveform_peaks) setWaveformPeaks(data.waveform_peaks);
+      parseSrt(finalData.srt_content as string);
+      if (finalData.srt_content_adjusted) setSrtContentAdjusted(finalData.srt_content_adjusted as string);
+      if (finalData.waveform_peaks) setWaveformPeaks(finalData.waveform_peaks as number[]);
 
       toast({
         title: "Processing Complete!",
-        description: `${data.sentence_count} sentences transcribed.`,
+        description: `${finalData.sentence_count} sentences transcribed.`,
       });
+      fetchDashboardFiles(); // refresh library
     } catch (error) {
       console.error("URL processing error:", error);
       toast({
@@ -540,6 +679,52 @@ export default function LinguaPlayerPage() {
     setIsPlaying(false);
     setSentenceProgress(0);
     lastRefinedKeyRef.current = '';
+    setCurrentFileId(null);
+    fetchDashboardFiles(); // refresh context
+  };
+
+  // ── Existing File Prompt Dialog Accept ────────────────────────────
+  const handleAcceptExistingFiles = () => {
+    if (!existingFilePrompt) return;
+    
+    setIsProcessing(true);
+    setProcessingStatus("Extracting audio...");
+    setTimeout(() => {
+      try {
+        if (existingFilePrompt.audio_base64 && existingFilePrompt.audio_base64.length > 0) {
+           const audioBytes = Uint8Array.from(atob(existingFilePrompt.audio_base64), c => c.charCodeAt(0));
+           const audioBlob = new Blob([audioBytes], { type: "audio/mpeg" });
+           const generatedAudioFile = new File([audioBlob], existingFilePrompt.filename, { type: "audio/mpeg" });
+           setAudioFile(generatedAudioFile);
+           setAudioUrl(URL.createObjectURL(audioBlob));
+        }
+      
+        setCurrentFileId(existingFilePrompt.file_id);
+        if (existingFilePrompt.original_srt) {
+          const parsedSubs = parseSrtText(existingFilePrompt.original_srt);
+          if (existingFilePrompt.starred_indices && Array.isArray(existingFilePrompt.starred_indices)) {
+            const starredIds = new Set(existingFilePrompt.starred_indices);
+            parsedSubs.forEach(sub => {
+              if (starredIds.has(sub.id)) {
+                sub.isStarred = true;
+              }
+            });
+          }
+          setSrtContent(existingFilePrompt.original_srt);
+          setSubtitles(parsedSubs);
+          setCurrentSentenceIndex(0);
+        }
+        if (existingFilePrompt.modified_srt) setSrtContentAdjusted(existingFilePrompt.modified_srt);
+        
+        toast({ title: "Loaded Existing Sentences!" });
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsProcessing(false);
+        setProcessingStatus("");
+        setExistingFilePrompt(null);
+      }
+    }, 100);
   };
 
   // Show upload view when there's no audio, or audio is present but subtitles haven't been loaded yet
@@ -636,7 +821,7 @@ export default function LinguaPlayerPage() {
                     {isProcessing ? (
                       <div className="flex items-center justify-center gap-3">
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        <span className="font-medium animate-pulse">{processingStatus || "Processing…"}</span>
+                        <span className="font-medium">Processing…</span>
                       </div>
                     ) : (
                       <span className="flex items-center gap-2">
@@ -644,6 +829,12 @@ export default function LinguaPlayerPage() {
                       </span>
                     )}
                   </Button>
+                  {isProcessing && processingStatus && (
+                    <div className="flex items-center gap-3 p-3 rounded-xl bg-primary/5 border border-primary/15 anim-slide-up">
+                      <div className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
+                      <span className="text-sm text-foreground/80 font-medium truncate">{processingStatus}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -684,7 +875,7 @@ export default function LinguaPlayerPage() {
                       </SelectContent>
                     </Select>
                     <Button
-                      onClick={handleTranscribeUpload}
+                      onClick={() => handleTranscribeUpload(false)}
                       disabled={isProcessing}
                       className="flex-1 h-11 font-bold shadow-md shadow-primary/10 transition-all hover:scale-[1.02]"
                       id="transcribe-upload-btn"
@@ -703,6 +894,109 @@ export default function LinguaPlayerPage() {
                   </div>
                 </div>
               )}
+
+              {/* ── Dashboard / Library Section ── */}
+              <div className="mt-8 flex flex-col gap-4">
+                <div className="flex items-center gap-3 px-2">
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-[0.2em] flex items-center gap-2">
+                      <Library className="w-3 h-3" /> Library
+                    </span>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="w-5 h-5 rounded-full hover:bg-primary/10 hover:text-primary transition-colors"
+                      onClick={(e) => { e.stopPropagation(); fetchDashboardFiles(); }}
+                      disabled={isLoadingDashboard}
+                    >
+                      <History className={cn("w-3 h-3", isLoadingDashboard && "animate-spin")} />
+                    </Button>
+                  </div>
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+                </div>
+                
+                {isLoadingDashboard ? (
+                  <div className="flex justify-center p-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-primary/40" />
+                  </div>
+                ) : dashboardFiles.length > 0 ? (
+                  <>
+                  {/* Loading banner shown when a file is being fetched */}
+                  {loadingFileId && (
+                    <div className="flex items-center gap-3 p-3 rounded-xl bg-primary/10 border border-primary/20 anim-slide-up mb-1">
+                      <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
+                      <span className="text-sm font-medium text-foreground/80">Loading audio from library…</span>
+                      <span className="ml-auto text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Please wait</span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {dashboardFiles.map(file => {
+                      const isThisLoading = loadingFileId === file.id;
+                      return (
+                        <div key={file.id}
+                             className={cn(
+                               "relative flex flex-col p-3 rounded-2xl border transition-all group overflow-hidden",
+                               isThisLoading
+                                 ? "bg-primary/10 border-primary/40 cursor-wait scale-[0.98]"
+                                 : loadingFileId
+                                   ? "bg-secondary/20 border-secondary/50 opacity-50 cursor-not-allowed"
+                                   : "bg-secondary/20 border-secondary/50 hover:bg-secondary/40 cursor-pointer"
+                             )}
+                             onClick={() => !loadingFileId && loadDashboardFile(file.id, file.filename)}>
+                          {/* Spinner overlay for the card being loaded */}
+                          {isThisLoading && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/60 backdrop-blur-sm rounded-2xl z-10 gap-2">
+                              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                              <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Loading…</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between items-start mb-2">
+                            <div className={cn(
+                              "w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-colors",
+                              isThisLoading ? "bg-primary/20 text-primary" : "bg-primary/10 text-primary"
+                            )}>
+                              <FileAudio className="w-4 h-4" />
+                            </div>
+                            <div className="flex gap-1 items-center">
+                              <span title="Original SRT" className="w-5 h-5 rounded-md bg-secondary flex items-center justify-center text-muted-foreground"><History className="w-3 h-3" /></span>
+                              {file.has_modified_srt && (
+                                <span title="Modified SRT" className="w-5 h-5 rounded-md bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><CheckCircle2 className="w-3 h-3" /></span>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="w-6 h-6 rounded-md hover:bg-destructive/10 hover:text-destructive transition-colors ml-1"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteConfirmDialog({ show: true, file_id: file.id, title: file.title || file.filename });
+                                }}
+                                disabled={!!loadingFileId}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          </div>
+                          <h4 className="font-bold text-sm line-clamp-2 leading-tight mb-1 group-hover:text-primary transition-colors">{file.title || file.filename}</h4>
+                          <div className="mt-auto flex items-center gap-1 text-[10px] text-muted-foreground mt-2 font-medium">
+                            <Clock className="w-3 h-3" />
+                            <span>{new Date(file.date).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-secondary/30 rounded-[2rem] bg-secondary/5 transition-all hover:bg-secondary/10 group">
+                    <div className="w-12 h-12 rounded-full bg-secondary/20 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                      <Library className="w-6 h-6 text-muted-foreground/30" />
+                    </div>
+                    <p className="text-sm text-muted-foreground/60 font-bold tracking-tight">Your library is empty</p>
+                    <p className="text-[10px] text-muted-foreground/40 mt-1 uppercase font-bold tracking-widest">Upload files to get started</p>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <PlayerView
@@ -725,6 +1019,7 @@ export default function LinguaPlayerPage() {
               isGeneratingAdjustedSrt={isGeneratingAdjustedSrt}
               onGenerateAdjustedSrt={handleGenerateAdjustedSrt}
               isExtractingWaveform={isExtractingWaveform}
+              currentFileId={currentFileId}
             />
           )}
         </CardContent>
@@ -743,6 +1038,70 @@ export default function LinguaPlayerPage() {
         )}
       </Card>
       <audio ref={audioRef} src={audioUrl ?? undefined} onEnded={() => setIsPlaying(false)} />
+
+      {/* Existing File Prompt Dialog */}
+      <Dialog open={existingFilePrompt !== null} onOpenChange={(open) => {
+        if (!open) setExistingFilePrompt(null);
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><History className="w-5 h-5 text-primary" /> Already in Library</DialogTitle>
+            <DialogDescription>
+              We found existing transcriptions for <strong>{existingFilePrompt?.filename}</strong> in your library.
+              What would you like to do?
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex flex-col gap-3 py-4">
+            <div className="flex p-3 rounded-lg border bg-secondary/20 items-center justify-between">
+              <span className="text-sm font-medium">Original Transcription</span>
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+            </div>
+            {existingFilePrompt?.modified_srt && (
+              <div className="flex p-3 rounded-lg border bg-secondary/20 items-center justify-between">
+                <span className="text-sm font-medium">Volume-Adjusted (Modified)</span>
+                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2 sm:justify-between">
+            <Button variant="outline" onClick={() => handleTranscribeUpload(true)} className="flex-1">
+              Re-transcribe
+            </Button>
+            <Button onClick={handleAcceptExistingFiles} className="flex-1">
+              Load Existing
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmDialog !== null} onOpenChange={(open) => {
+        if (!open) setDeleteConfirmDialog(null);
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive"><Trash2 className="w-5 h-5" /> Delete from Library?</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <strong>{deleteConfirmDialog?.title}</strong>? 
+              This will permanently remove the audio and all transcription data.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col sm:flex-row gap-2 mt-4">
+            <Button variant="outline" onClick={() => setDeleteConfirmDialog(null)} className="flex-1">
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={() => deleteConfirmDialog && deleteDashboardFile(deleteConfirmDialog.file_id)} 
+              className="flex-1"
+            >
+              Delete Permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

@@ -13,6 +13,7 @@ import tempfile
 import traceback
 import shutil
 import io
+import datetime
 from pathlib import Path
 
 # ── Directories ─────────────────────────────────────────────────────────
@@ -20,8 +21,10 @@ MP3_CACHE_DIR = Path(__file__).parent / "mp3_cache"
 MP3_CACHE_DIR.mkdir(exist_ok=True)
 TEMP_DIR = Path(tempfile.gettempdir()) / "lingua_player"
 TEMP_DIR.mkdir(exist_ok=True)
+USER_UPLOADS_DIR = Path(__file__).parent / "user_uploads"
+USER_UPLOADS_DIR.mkdir(exist_ok=True)
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, Response, stream_with_context
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -138,11 +141,32 @@ def slice_audio(mp3_path: Path, video_id: str) -> list[Path]:
         chunk_idx += 1
     return chunks
 
-def transcribe_chunks(chunks: list[Path], video_id: str, model_name: str) -> list[dict]:
+def transcribe_chunks(chunks: list[Path], video_id: str, model_name: str, progress_cb=None) -> list[dict]:
     import whisper
     model = whisper.load_model(model_name)
     all_results = []
+    # Pre-compute chunk durations for display
+    chunk_start_minutes = []
+    if len(chunks) > 1:
+        from pydub import AudioSegment
+        offset_min = 0.0
+        for c in chunks:
+            chunk_start_minutes.append(offset_min)
+            dur = len(AudioSegment.from_mp3(str(c))) / 1000.0 / 60.0
+            offset_min += dur
+    else:
+        chunk_start_minutes = [0.0]
+
     for idx, chunk_path in enumerate(chunks):
+        # Report progress
+        if progress_cb:
+            if len(chunks) == 1:
+                progress_cb("transcribing", f"Transcribing audio with Whisper ({model_name})…")
+            else:
+                start_m = int(chunk_start_minutes[idx])
+                end_m = int(chunk_start_minutes[idx + 1]) if idx + 1 < len(chunk_start_minutes) else "end"
+                progress_cb("transcribing", f"Transcribing chunk {idx+1}/{len(chunks)} ({start_m}–{end_m} min)…")
+
         recovery_path = TEMP_DIR / f"{video_id}_result_{idx}.json"
         if recovery_path.exists():
             with open(recovery_path, "r", encoding="utf-8") as f: result = json.load(f)
@@ -343,6 +367,210 @@ def process_podcast():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# ── SSE Streaming helper ─────────────────────────────────────────────
+def _save_to_library(mp3_path: Path, title: str, url: str, source: str) -> str:
+    """Save an MP3 to user_uploads library so user can reload / re-transcribe."""
+    file_id = hashlib.md5(url.encode()).hexdigest()[:12]
+    lib_mp3 = USER_UPLOADS_DIR / f"{file_id}.mp3"
+    lib_meta = USER_UPLOADS_DIR / f"{file_id}.json"
+    if not lib_mp3.exists():
+        shutil.copy2(str(mp3_path), str(lib_mp3))
+    safe_name = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:60]
+    if not safe_name.lower().endswith('.mp3'):
+        safe_name += '.mp3'
+    meta = {
+        "title": title,
+        "filename": safe_name,
+        "url": url,
+        "source": source,
+        "date": datetime.datetime.now().isoformat(),
+    }
+    lib_meta.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    return file_id
+
+def _sse_event(event: str, data: dict) -> str:
+    """Format a single SSE event."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+@app.route("/api/process-url-stream", methods=["POST", "OPTIONS"])
+def process_url_stream():
+    """SSE streaming endpoint for YouTube / Podcast download + transcription.
+    Sends progress events as the work proceeds, then a final 'done' event.
+    """
+    if request.method == "OPTIONS": 
+        resp = Response("", 204)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    data = request.get_json()
+    url = data.get("url", "").strip()
+    model_name = data.get("model", "base")
+    enable_volume = data.get("enable_volume_adjustment", True)
+    if not url:
+        return jsonify({"error": "No URL provided"}), 400
+
+    is_yt = bool(re.search(r'(?:youtube\.com|youtu\.be)', url, re.I))
+
+    def generate():
+        try:
+            # ── Step 1: Download ──────────────────────────────────────
+            yield _sse_event("progress", {
+                "step": "downloading",
+                "message": "Downloading audio…" if is_yt else "Downloading podcast audio…"
+            })
+
+            if is_yt:
+                vid = get_video_id(url)
+                mp3_path = download_audio(url, vid)
+                title = get_video_title(url, vid)
+            else:
+                vid = get_video_id(url)
+                mp3_path, title = download_podcast_audio(url, vid)
+
+            safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:60]
+
+            yield _sse_event("progress", {
+                "step": "downloaded",
+                "message": f"✅ Audio downloaded: {title}"
+            })
+
+            # ── Step 1b: Save to library ───────────────────────────────
+            file_id = _save_to_library(mp3_path, title, url, "youtube" if is_yt else "podcast")
+            yield _sse_event("progress", {
+                "step": "saved_to_library",
+                "message": "💾 Saved MP3 to library",
+                "file_id": file_id,
+            })
+
+            # ── Step 2: Slice audio ────────────────────────────────────
+            yield _sse_event("progress", {
+                "step": "slicing",
+                "message": "Splitting audio into chunks…"
+            })
+            chunks = slice_audio(mp3_path, vid)
+            yield _sse_event("progress", {
+                "step": "sliced",
+                "message": f"Audio split into {len(chunks)} chunk(s)"
+            })
+
+            # ── Step 3: Transcribe with progress callback ──────────────
+            def on_progress(step, msg):
+                """This is a closure – we can't yield from here directly,
+                so we stash messages and yield them after each chunk."""
+                on_progress.pending.append((step, msg))
+            on_progress.pending = []
+
+            # We transcribe chunk-by-chunk so we can yield progress in between
+            import whisper
+            model = whisper.load_model(model_name)
+            all_results = []
+
+            # Pre-compute chunk time labels
+            chunk_start_minutes = []
+            if len(chunks) > 1:
+                from pydub import AudioSegment
+                offset_min = 0.0
+                for c in chunks:
+                    chunk_start_minutes.append(offset_min)
+                    dur = len(AudioSegment.from_mp3(str(c))) / 1000.0 / 60.0
+                    offset_min += dur
+            else:
+                chunk_start_minutes = [0.0]
+
+            for idx, chunk_path in enumerate(chunks):
+                if len(chunks) == 1:
+                    msg = f"Transcribing audio with Whisper ({model_name})…"
+                else:
+                    start_m = int(chunk_start_minutes[idx])
+                    end_m = int(chunk_start_minutes[idx + 1]) if idx + 1 < len(chunk_start_minutes) else "end"
+                    msg = f"Transcribing chunk {idx+1}/{len(chunks)} ({start_m}–{end_m} min)…"
+
+                yield _sse_event("progress", {
+                    "step": "transcribing",
+                    "message": msg,
+                    "chunk": idx + 1,
+                    "total_chunks": len(chunks),
+                })
+
+                recovery_path = TEMP_DIR / f"{vid}_result_{idx}.json"
+                if recovery_path.exists():
+                    with open(recovery_path, "r", encoding="utf-8") as f:
+                        result = json.load(f)
+                else:
+                    result = model.transcribe(str(chunk_path), word_timestamps=True, verbose=False)
+                    result = serialize_whisper_result(result)
+                    with open(recovery_path, "w", encoding="utf-8") as f:
+                        json.dump(result, f, ensure_ascii=False)
+                all_results.append(result)
+
+            # ── Step 4: Build sentences ────────────────────────────────
+            yield _sse_event("progress", {
+                "step": "building",
+                "message": "Building sentences from transcription…"
+            })
+            sentences = merge_and_build_sentences(
+                all_results,
+                get_chunk_durations(chunks) if len(chunks) > 1 else [0.0]
+            )
+            srt_content = sentences_to_srt(sentences)
+            srt_adjusted = sentences_to_srt(
+                refine_end_times_by_silence(sentences, mp3_path)
+            ) if enable_volume else ""
+
+            # Save SRTs to library
+            orig_srt_path = USER_UPLOADS_DIR / f"{file_id}.original.srt"
+            mod_srt_path = USER_UPLOADS_DIR / f"{file_id}.modified.srt"
+            orig_srt_path.write_text(srt_content, encoding="utf-8")
+            if srt_adjusted:
+                mod_srt_path.write_text(srt_adjusted, encoding="utf-8")
+
+            # ── Step 5: Extract waveform ───────────────────────────────
+            yield _sse_event("progress", {
+                "step": "waveform",
+                "message": "Extracting audio waveform…"
+            })
+            waveform_peaks = extract_waveform_peaks(mp3_path)
+            peaks_path = USER_UPLOADS_DIR / f"{file_id}.peaks.json"
+            peaks_path.write_text(json.dumps(waveform_peaks), encoding="utf-8")
+
+            # ── Step 6: Encode audio ───────────────────────────────────
+            yield _sse_event("progress", {
+                "step": "encoding",
+                "message": "Preparing audio for playback…"
+            })
+            with open(mp3_path, "rb") as f:
+                audio_b64 = base64.b64encode(f.read()).decode("ascii")
+
+            cleanup_temp_files(vid)
+
+            # ── Final result ───────────────────────────────────────────
+            yield _sse_event("done", {
+                "audio_base64": audio_b64,
+                "audio_filename": f"{safe_title}.mp3",
+                "srt_content": srt_content,
+                "srt_content_adjusted": srt_adjusted,
+                "sentence_count": len(sentences),
+                "waveform_peaks": waveform_peaks,
+                "file_id": file_id,
+            })
+
+        except Exception as e:
+            traceback.print_exc()
+            yield _sse_event("error", {"error": str(e)})
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
 @app.route("/api/transcribe-upload", methods=["POST", "OPTIONS"])
 def transcribe_upload():
     if request.method == "OPTIONS": return "", 204
@@ -352,17 +580,52 @@ def transcribe_upload():
     audio_file = request.files["file"]
     model_name = request.form.get("model", "base")
     enable_volume = request.form.get("enable_volume_adjustment", "true").lower() == "true"
+    force_transcribe = request.form.get("force_transcribe", "false").lower() == "true"
     if not audio_file.filename: return jsonify({"error": "Empty filename"}), 400
     print(f"[transcribe-upload] filename={audio_file.filename}, model={model_name}", flush=True)
     file_id = hashlib.md5(audio_file.filename.encode()).hexdigest()[:12]
-    mp3_path = TEMP_DIR / f"{file_id}.mp3"
+    mp3_path = USER_UPLOADS_DIR / f"{file_id}.mp3"
+    orig_srt_path = USER_UPLOADS_DIR / f"{file_id}.original.srt"
+    mod_srt_path = USER_UPLOADS_DIR / f"{file_id}.modified.srt"
+    meta_path = USER_UPLOADS_DIR / f"{file_id}.json"
+    
     try:
+        if mp3_path.exists() and orig_srt_path.exists() and not force_transcribe:
+            orig_content = orig_srt_path.read_text(encoding="utf-8")
+            mod_content = mod_srt_path.read_text(encoding="utf-8") if mod_srt_path.exists() else ""
+            # Load starred_indices from meta
+            meta_path = USER_UPLOADS_DIR / f"{file_id}.json"
+            starred_indices = []
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    starred_indices = meta.get("starred_indices", [])
+                except: pass
+
+            return jsonify({
+                "exists": True,
+                "file_id": file_id,
+                "filename": audio_file.filename,
+                "original_srt": orig_content,
+                "modified_srt": mod_content,
+                "starred_indices": starred_indices
+            })
+            
         # Always save the file to ensure we're not using a corrupted/truncated version
         audio_file.save(str(mp3_path))
         file_size = mp3_path.stat().st_size
         print(f"[transcribe-upload] saved to {mp3_path} ({file_size} bytes)", flush=True)
         safe_name = re.sub(r'[^\w\s-]', '', audio_file.filename).strip().replace(' ', '_')[:60]
         if not safe_name.lower().endswith('.mp3'): safe_name += '.mp3'
+        
+        # Save meta
+        meta_info = {
+            "title": audio_file.filename,
+            "filename": safe_name,
+            "date": datetime.datetime.now().isoformat()
+        }
+        meta_path.write_text(json.dumps(meta_info, ensure_ascii=False), encoding="utf-8")
+
         print(f"[transcribe-upload] slicing audio...", flush=True)
         chunks = slice_audio(mp3_path, file_id)
         print(f"[transcribe-upload] {len(chunks)} chunk(s), transcribing with model={model_name}...", flush=True)
@@ -372,8 +635,16 @@ def transcribe_upload():
         srt_content = sentences_to_srt(sentences)
         srt_adjusted = sentences_to_srt(refine_end_times_by_silence(sentences, mp3_path)) if enable_volume else ""
         waveform_peaks = extract_waveform_peaks(mp3_path)
+        peaks_path = USER_UPLOADS_DIR / f"{file_id}.peaks.json"
+        peaks_path.write_text(json.dumps(waveform_peaks), encoding="utf-8")
+        
+        # Save SRTs
+        orig_srt_path.write_text(srt_content, encoding="utf-8")
+        if srt_adjusted:
+            mod_srt_path.write_text(srt_adjusted, encoding="utf-8")
+            
         print(f"[transcribe-upload] done! {len(sentences)} sentences", flush=True)
-        return jsonify({"srt_content": srt_content, "srt_content_adjusted": srt_adjusted, "sentence_count": len(sentences), "waveform_peaks": waveform_peaks})
+        return jsonify({"srt_content": srt_content, "srt_content_adjusted": srt_adjusted, "sentence_count": len(sentences), "waveform_peaks": waveform_peaks, "file_id": file_id})
     except Exception as e:
         print(f"[transcribe-upload] ERROR: {e}", flush=True)
         traceback.print_exc()
@@ -523,6 +794,119 @@ def download_podcast_audio(url: str, podcast_id: str) -> tuple[Path, str]:
     if not output_path.exists(): raise RuntimeError(f"Failed to download: {url}")
     meta_file.write_text(json.dumps({'title': title, 'url': url, 'source': 'podcast'}, ensure_ascii=False), encoding='utf-8')
     return output_path, title
+
+@app.route("/api/dashboard-files", methods=["GET"])
+def dashboard_files():
+    try:
+        files = []
+        for meta_path in USER_UPLOADS_DIR.glob("*.json"):
+            file_id = meta_path.stem
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                has_mod = (USER_UPLOADS_DIR / f"{file_id}.modified.srt").exists()
+                meta["id"] = file_id
+                meta["has_modified_srt"] = has_mod
+                files.append(meta)
+            except:
+                pass
+        # Sort by date desc
+        files.sort(key=lambda x: x.get("date", ""), reverse=True)
+        return jsonify({"files": files})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/load-dashboard-file/<file_id>", methods=["GET"])
+def load_dashboard_file(file_id):
+    try:
+        mp3_path = USER_UPLOADS_DIR / f"{file_id}.mp3"
+        orig_path = USER_UPLOADS_DIR / f"{file_id}.original.srt"
+        mod_path = USER_UPLOADS_DIR / f"{file_id}.modified.srt"
+        
+        if not mp3_path.exists():
+            return jsonify({"error": "File not found"}), 404
+            
+        with open(mp3_path, "rb") as f: audio_b64 = base64.b64encode(f.read()).decode("ascii")
+        
+        orig_content = orig_path.read_text(encoding="utf-8") if orig_path.exists() else ""
+        mod_content = mod_path.read_text(encoding="utf-8") if mod_path.exists() else ""
+        
+        # Load peaks if available, else calc
+        peaks_path = USER_UPLOADS_DIR / f"{file_id}.peaks.json"
+        if peaks_path.exists():
+            try:
+                waveform_peaks = json.loads(peaks_path.read_text(encoding="utf-8"))
+            except Exception:
+                waveform_peaks = extract_waveform_peaks(mp3_path)
+                peaks_path.write_text(json.dumps(waveform_peaks), encoding="utf-8")
+        else:
+            waveform_peaks = extract_waveform_peaks(mp3_path)
+            peaks_path.write_text(json.dumps(waveform_peaks), encoding="utf-8")
+        
+        # Load meta for starred_indices
+        meta_path = USER_UPLOADS_DIR / f"{file_id}.json"
+        starred_indices = []
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                starred_indices = meta.get("starred_indices", [])
+            except: pass
+
+        return jsonify({
+            "audio_base64": audio_b64,
+            "original_srt": orig_content,
+            "modified_srt": mod_content,
+            "filename": f"{file_id}.mp3",
+            "waveform_peaks": waveform_peaks,
+            "starred_indices": starred_indices
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/save-srt", methods=["POST"])
+def save_srt():
+    data = request.get_json()
+    file_id = data.get("file_id")
+    srt_content = data.get("srt_content", "")
+    srt_type = data.get("type", "modified") # 'original' or 'modified'
+    starred_indices = data.get("starred_indices") # Optional list of IDs/indices
+    if not file_id: return jsonify({"error": "No file_id provided"}), 400
+    try:
+        # Save SRT
+        save_path = USER_UPLOADS_DIR / f"{file_id}.{srt_type}.srt"
+        save_path.write_text(srt_content, encoding="utf-8")
+        
+        # Save starred_indices to meta if provided
+        if starred_indices is not None:
+            meta_path = USER_UPLOADS_DIR / f"{file_id}.json"
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                meta["starred_indices"] = starred_indices
+                meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/delete-dashboard-file/<file_id>", methods=["DELETE"])
+def delete_dashboard_file(file_id):
+    try:
+        # Define all possible file extensions for a library entry
+        extensions = [".mp3", ".json", ".original.srt", ".modified.srt", ".peaks.json"]
+        deleted_count = 0
+        for ext in extensions:
+            file_path = USER_UPLOADS_DIR / f"{file_id}{ext}"
+            if file_path.exists():
+                file_path.unlink()
+                deleted_count += 1
+        
+        if deleted_count == 0:
+            return jsonify({"error": "No files found for this ID"}), 404
+            
+        return jsonify({"success": True, "deleted_files": deleted_count})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     print("LinguaPlayer Backend started on port 5000")
